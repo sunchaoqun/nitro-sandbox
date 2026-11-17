@@ -1,0 +1,6 @@
+账号 111122223333，区域 us-west-1
+ETH key 已创建：alias/nitro-sandbox-workshop-eth（abcd1234-ab12-cd34-ef56-abcdef123456）
+arn:aws:iam::111122223333:role/nitro-sandbox-workshop
+instance profile 已创建，等 15 秒让它生效
+角色策略：kms-eth-sign	kms-generate-random
+完成

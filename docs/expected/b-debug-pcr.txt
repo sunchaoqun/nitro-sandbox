@@ -1,0 +1,5 @@
+attestation 文档: 4756 字节, module_id=i-0123456789abcdef0-enc0123456789abcdef, digest=SHA384
+  PCR3  9f81fb901a162c0df7b1652eb155e6dba797a46a0cfaf0e9c20ae669734f4afa17a23152a203fc1d6911e3b12c6674c4
+  PCR4  b6a321937c4fc1d04ef0823e880c7db5c91d36c36f4de05107ff667474c36453c5314d8030bd2e8d133990b26421c351
+  全零的 PCR: [0, 1, 2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]（debug_mode 下 0/1/2 全零是正常的）
+KMS GenerateRandom(Recipient) OK：在 Sandbox 里解开了 32 字节 → KMS 接受这份 attestation 文档

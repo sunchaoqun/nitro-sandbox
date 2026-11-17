@@ -1,0 +1,1923 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EC2 Nitro Sandbox Workshop：attestation、ETH 签名、instance store 性能</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #edf1f5;
+  --surface: #fcfcfb;
+  --ink: #16202c;
+  --ink-2: #4b5563;
+  --muted: #7b8494;
+  --rule: #d8dee6;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --code-bg: #0f1b2d;
+  --code-ink: #dbe4f0;
+  --code-c: #8a9bb4;
+  --out-bg: #f3f6f9;
+  --local: #2a78d6;
+  --sandbox: #eb6834;
+  --sync: #b4b3ab;
+  --focus: #2a78d6;
+  --good: #0ca30c; --good-ink: #006300; --warn: #fab219;
+  --sans: "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #101317; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #8f96a3;
+    --rule: #2d3138; --grid: #2c2c2a; --axis: #383835; --code-bg: #0a121e; --code-ink: #d6dfeb; --code-c: #7d8ca3;
+    --out-bg: #15181c; --local: #3987e5; --sandbox: #d95926; --sync: #5d5c57; --focus: #6da7ec; --good-ink: #0ca30c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #101317; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #8f96a3;
+  --rule: #2d3138; --grid: #2c2c2a; --axis: #383835; --code-bg: #0a121e; --code-ink: #d6dfeb; --code-c: #7d8ca3;
+  --out-bg: #15181c; --local: #3987e5; --sandbox: #d95926; --sync: #5d5c57; --focus: #6da7ec; --good-ink: #0ca30c;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; background: var(--page); color: var(--ink); font: 16px/1.75 var(--sans); }
+a { color: inherit; text-decoration-color: var(--muted); text-underline-offset: 3px; }
+a:hover { text-decoration-color: var(--ink); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+code { font-family: var(--mono); font-size: .88em; background: color-mix(in srgb, var(--rule) 45%, transparent); padding: .08em .35em; border-radius: 4px; }
+
+/* ---------- 顶部 ---------- */
+.bar a { color: inherit; }
+.bar { display: flex; justify-content: space-between; align-items: center; max-width: 1180px; margin: 0 auto; padding: 18px 28px 0; color: var(--ink-2); font-size: 14px; }
+.theme { font: inherit; color: var(--ink-2); background: transparent; border: 1px solid var(--rule); border-radius: 999px; padding: 4px 14px; cursor: pointer; }
+.theme:hover { color: var(--ink); border-color: var(--muted); }
+
+.hero { max-width: 1180px; margin: 0 auto; padding: 40px 28px 8px; }
+.hero h1 { font-size: clamp(28px, 3.4vw, 40px); line-height: 1.3; letter-spacing: -0.01em; margin: 0 0 16px; max-width: 22em; font-weight: 700; }
+.lead { max-width: 40em; color: var(--ink-2); font-size: 17px; margin: 0 0 28px; }
+
+/* I/O 路径图：整页唯一的"大"元素 */
+.path { background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; padding: 18px 18px 8px; overflow-x: auto; }
+.path svg { display: block; min-width: 760px; width: 100%; height: auto; }
+.path figcaption { font-size: 13.5px; color: var(--muted); padding: 6px 4px 6px; }
+
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; margin: 22px 0 0; }
+.tile { background: var(--surface); padding: 16px 18px 14px; }
+.tile-l { font-size: 14px; color: var(--ink-2); }
+.tile-v { font-size: 34px; font-weight: 650; line-height: 1.25; margin: 2px 0; }
+.tile-s { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 760px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---------- 正文 ---------- */
+.layout { max-width: 1180px; margin: 0 auto; padding: 36px 28px 80px; display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 48px; }
+.toc { position: sticky; top: 20px; align-self: start; font-size: 14px; max-height: calc(100vh - 40px); overflow: auto; }
+.toc p { margin: 0 0 6px; color: var(--muted); }
+.toc ol, .toc ul { list-style: none; margin: 0 0 18px; padding: 0; }
+.toc a { display: block; padding: 3px 0 3px 12px; border-left: 2px solid transparent; color: var(--ink-2); text-decoration: none; line-height: 1.5; }
+.toc a:hover { color: var(--ink); }
+.toc a.on { color: var(--ink); border-left-color: var(--sandbox); }
+@media (max-width: 960px) { .layout { grid-template-columns: 1fr; } .toc { position: static; max-height: none; } }
+
+main > section { margin: 0 0 64px; }
+main h2 { font-size: 24px; line-height: 1.4; margin: 0 0 10px; }
+main h2 + p, .prose { max-width: 42em; color: var(--ink-2); }
+.prose li { margin: 0 0 8px; }
+
+.env { display: grid; grid-template-columns: max-content 1fr; gap: 6px 20px; margin: 16px 0 0; max-width: 46em; }
+.env dt { color: var(--muted); }
+.env dd { margin: 0; }
+
+/* 步骤 */
+.steps { list-style: none; padding: 0; margin: 24px 0 0; }
+.step { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 16px; padding: 0 0 36px; position: relative; }
+.step:not(:last-child)::before { content: ""; position: absolute; left: 19px; top: 44px; bottom: 6px; width: 1px; background: var(--rule); }
+.step-n { width: 40px; height: 40px; border-radius: 50%; border: 1.5px solid var(--ink); display: grid; place-items: center; font-weight: 650; font-variant-numeric: tabular-nums; background: var(--page); }
+.step h3 { font-size: 18px; line-height: 1.45; margin: 6px 0 6px; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; }
+.step p { margin: 0 0 12px; max-width: 42em; color: var(--ink-2); }
+.where { font-size: 13px; font-weight: 500; color: var(--ink-2); border: 1px solid var(--rule); border-radius: 999px; padding: 0 10px; white-space: nowrap; }
+.where-p { border-color: color-mix(in srgb, var(--local) 55%, var(--rule)); }
+.where-w { border-style: dashed; }
+
+.code { position: relative; margin: 0 0 10px; }
+.code pre { margin: 0; background: var(--code-bg); color: var(--code-ink); border-radius: 10px; padding: 40px 18px 16px; overflow-x: auto; font: 13.5px/1.65 var(--mono); tab-size: 2; }
+.code code { background: none; padding: 0; font-size: inherit; }
+.code .c { color: var(--code-c); }
+.code.long details { background: var(--code-bg); border-radius: 10px; }
+.code.long summary { cursor: pointer; color: var(--code-ink); padding: 12px 18px; font-size: 14px; list-style-position: inside; }
+.code.long summary:hover { color: #fff; }
+.code.long details[open] summary { border-bottom: 1px solid rgba(255,255,255,.1); }
+.code.long details pre { border-radius: 0 0 10px 10px; padding-top: 14px; }
+.copy { position: absolute; top: 8px; right: 8px; font: 12.5px var(--sans); color: #c9d4e3; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.16); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
+.copy:hover { background: rgba(255,255,255,.16); }
+.out { border: 1px solid var(--rule); border-radius: 10px; background: var(--out-bg); margin: 0 0 4px; }
+.out-h { font-size: 12.5px; color: var(--muted); padding: 6px 14px 0; }
+.out pre { margin: 0; padding: 4px 14px 12px; overflow-x: auto; font: 13px/1.6 var(--mono); color: var(--ink-2); }
+
+
+/* 首屏矩阵 */
+.mfig { margin: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; padding: 6px 6px 0; overflow-x: auto; }
+.mfig figcaption { font-size: 13.5px; color: var(--muted); padding: 10px 14px 14px; max-width: 70em; }
+.matrix { border: 0; border-radius: 0; background: transparent; min-width: 760px; }
+.matrix th, .matrix td { border-bottom: 1px solid var(--rule); padding: 11px 14px; vertical-align: middle; }
+.matrix thead th { background: transparent; color: var(--ink); font-weight: 650; font-size: 14.5px; line-height: 1.4; }
+.matrix thead th small { color: var(--muted); font-weight: 400; font-size: 12.5px; }
+.matrix tbody th { text-align: left; font-weight: 500; color: var(--ink); white-space: nowrap; background: transparent; }
+.matrix tbody tr:last-child th, .matrix tbody tr:last-child td { border-bottom: 0; }
+.matrix td a { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; text-decoration: none; color: var(--ink); }
+.matrix td a:hover .sn { color: var(--ink-2); text-decoration: underline; }
+.mk { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; font-size: 13px; font-weight: 700; flex: none; align-self: center; }
+.mk-ok { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good-ink); }
+.mk-no { background: color-mix(in srgb, var(--ink) 9%, transparent); color: var(--ink); }
+.mk-warn { background: color-mix(in srgb, var(--warn) 28%, transparent); color: var(--ink); }
+.sn { font-size: 12.5px; color: var(--muted); }
+.na { color: var(--muted); font-size: 13.5px; }
+.toc-steps > li { margin: 0 0 12px; }
+.toc-part > span { display: block; color: var(--ink); font-weight: 600; margin: 0 0 2px; }
+.toc-part ol { list-style: none; margin: 0; padding: 0; }
+main h3.sub { font-size: 18px; margin: 30px 0 8px; }
+
+/* 脚本内容（折叠） */
+.srcs { margin: 0 0 10px; display: grid; gap: 6px; }
+.src { border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
+.src summary { cursor: pointer; padding: 7px 14px; font-size: 13.5px; color: var(--ink-2); }
+.src summary a { color: var(--ink); }
+.src pre { margin: 0; padding: 12px 16px; border-top: 1px solid var(--rule); overflow-x: auto; font: 12.5px/1.6 var(--mono); color: var(--ink-2); max-height: 520px; }
+
+/* 图表 */
+.legend { display: flex; gap: 20px; flex-wrap: wrap; font-size: 14px; color: var(--ink-2); margin: 14px 0 4px; }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.legend i { width: 14px; height: 10px; border-radius: 2px; display: inline-block; }
+.charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 12px 0 0; }
+@media (max-width: 760px) { .charts { grid-template-columns: 1fr; } }
+.chart { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px 6px; margin: 0; }
+.chart h3 { margin: 0; font-size: 16px; }
+.chart .cd { font-size: 13px; color: var(--muted); margin: 0 0 2px; }
+.chart .cr { font-size: 14px; color: var(--ink-2); margin: 0 0 4px; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart g.row { cursor: default; }
+.chart g.row:hover path, .chart g.row:focus path { filter: brightness(1.12); }
+.tools { display: flex; justify-content: flex-end; margin: 10px 0 0; }
+.tbtn { font: inherit; font-size: 14px; color: var(--ink-2); background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 4px 14px; cursor: pointer; }
+.tbtn:hover { color: var(--ink); }
+.tablewrap { overflow-x: auto; margin: 12px 0 0; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-weight: 600; color: var(--ink-2); background: color-mix(in srgb, var(--rule) 30%, var(--surface)); }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+.tip { position: fixed; pointer-events: none; z-index: 10; background: var(--surface); color: var(--ink); border: 1px solid var(--rule); border-radius: 8px; padding: 8px 12px; font-size: 13.5px; box-shadow: 0 6px 24px rgba(15, 27, 45, .14); opacity: 0; transition: opacity .12s; max-width: 280px; }
+.tip strong { display: block; font-size: 15px; font-variant-numeric: tabular-nums; }
+.tip .k { display: inline-block; width: 12px; height: 2px; vertical-align: middle; margin-right: 6px; }
+.note { font-size: 14px; color: var(--muted); max-width: 46em; margin: 12px 0 0; }
+footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--rule); padding: 18px 0 0; }
+@media print { .toc, .copy, .theme, .tools { display: none; } .layout { display: block; } body { background: #fff; } }
+</style>
+</head>
+<body>
+<div class="bar"><span>EC2 Nitro Sandbox Workshop（2026-11-17 实测），仓库 <a href="https://github.com/sunchaoqun/nitro-sandbox">github.com/sunchaoqun/nitro-sandbox</a></span><button class="theme" type="button" id="theme">切换深色</button></div>
+
+<header class="hero">
+  <h1>EC2 Nitro Sandbox 实测：只有镜像没被改过的 Sandbox 才拿得到 KMS 里的密钥，instance store 读得和直测一样快</h1>
+  <p class="lead">在一台 i7i.2xlarge 上从零搭起来，测三件事：KMS 能不能只对 PCR 匹配的 Sandbox 放行；以太坊交易怎么签、谁能签；
+    把整块 instance store 交给 Sandbox 之后读写有多快。下面 28 步照着做大约一个半小时，能得到和这里一样的结果。每一步执行的都是仓库里的脚本。</p>
+  <figure class="mfig">
+    <table class="matrix"><thead><tr><th>谁来要</th><th>加密的数据<br><small>kms:Decrypt + attestation</small></th><th>ETH 钱包私钥<br><small>GenerateDataKeyPair / Decrypt + attestation</small></th><th>KMS Sign 签 ETH<br><small>kms:Sign，私钥不出 KMS</small></th></tr></thead><tbody><tr><th scope="row">Sandbox，原镜像，带 attestation</th><td class="m-ok"><a href="#s-dec"><span class="mk mk-ok">✓</span>能解开<span class="sn">第 16 步</span></a></td><td class="m-ok"><a href="#s-wallet"><span class="mk mk-ok">✓</span>能创建、能签名<span class="sn">第 18 步</span></a></td><td class="m-ok"><a href="#s-sign"><span class="mk mk-ok">✓</span>能签<span class="sn">第 20 步</span></a></td></tr><tr><th scope="row">Sandbox，不带 attestation</th><td class="m-no"><a href="#s-neg"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 17 步</span></a></td><td class="m-no"><a href="#s-walletneg"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 19 步</span></a></td><td class="m-na"><span class="na">不适用</span></td></tr><tr><th scope="row">parent，用同一个实例角色</th><td class="m-no"><a href="#s-neg"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 17 步</span></a></td><td class="m-no"><a href="#s-walletneg"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 19 步</span></a></td><td class="m-warn"><a href="#s-signneg"><span class="mk mk-warn">⚠</span>也能签<span class="sn">第 21 步</span></a></td></tr><tr><th scope="row">封口之后（PCR16 已锁定）</th><td class="m-no"><a href="#s-seal"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 22 步</span></a></td><td class="m-no"><a href="#s-seal"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 22 步</span></a></td><td class="m-na"><span class="na">不适用</span></td></tr><tr><th scope="row">改过镜像（cmdline 多一个 quiet）</th><td class="m-no"><a href="#s-changed"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 23 步</span></a></td><td class="m-no"><a href="#s-changed"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 23 步</span></a></td><td class="m-na"><span class="na">不适用</span></td></tr><tr><th scope="row">debug 模式（PCR0～2 全零）</th><td class="m-no"><a href="#s-debug"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 24 步</span></a></td><td class="m-skip"><span class="na">没测</span></td><td class="m-na"><span class="na">不适用</span></td></tr><tr><th scope="row">恢复原镜像重启</th><td class="m-ok"><a href="#s-restore"><span class="mk mk-ok">✓</span>能解开<span class="sn">第 25 步</span></a></td><td class="m-ok"><a href="#s-restore"><span class="mk mk-ok">✓</span>能签名<span class="sn">第 25 步</span></a></td><td class="m-na"><span class="na">不适用</span></td></tr></tbody></table>
+    <figcaption>2026-11-17 实测，每一格都能点开看对应步骤和原始输出。七行全部和预期一致。
+      KMS Sign 那一列只测了前三行：kms:Sign 不支持 attestation，key policy 只能按 IAM 身份放行，所以 parent 也能签（第 3 行）；其他行它同样不看 PCR。</figcaption>
+  </figure>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="目录">
+    <p>目录</p>
+    <ul>
+      <li><a href="#what">测的是什么</a></li>
+    </ul>
+    <ul class="toc-steps">
+<li class="toc-part"><span>准备</span><ol><li><a href="#s-clone">1. clone 仓库，填好 workshop.env</a></li><li><a href="#s-prereq">2. 创建实例角色和 ETH 签名 key</a></li><li><a href="#s-launch">3. 开一台带 instance store 的 parent</a></li><li><a href="#s-pclone">4. 登录 parent，clone 仓库</a></li><li><a href="#s-setup">5. 装 fio 和 Firecracker，预留内存池（会重启）</a></li><li><a href="#s-reboot">6. 确认内存池，记下 instance store 的稳定路径</a></li><li><a href="#s-guest">7. 准备 Sandbox 的内核、initrd 和 rootfs</a></li></ol></li>
+<li class="toc-part"><span>A. instance store 性能</span><ol><li><a href="#s-local">8. 测 parent 直测（这时 Sandbox 还没开）</a></li><li><a href="#s-start">9. 启动 Sandbox，把整块 instance store 交给它</a></li><li><a href="#s-sandbox">10. 测 Sandbox</a></li><li><a href="#s-compare">11. 对比结果</a></li><li><a href="#s-sync">12. （可选）看看默认的 Sync 引擎有多慢</a></li></ol></li>
+<li class="toc-part"><span>B. Attestation 和 ETH 签名</span><ol><li><a href="#s-pydeps">13. 给 rootfs 装 Python 依赖和脚本，配好 NAT</a></li><li><a href="#s-probe">14. 启动 Sandbox，跑 NSM 探针，记下 PCR0</a></li><li><a href="#s-key">15. 创建只认这个 PCR0 的 KMS key</a></li><li><a href="#s-dec">16. 加密，再带 attestation 解密</a></li><li><a href="#s-neg">17. 负面测试：不带 attestation、parent 直接解密</a></li><li><a href="#s-wallet">18. attestation 保护的 ETH 钱包：创建并签名</a></li><li><a href="#s-walletneg">19. 钱包的负面测试：不带 attestation、parent 直接解密私钥</a></li><li><a href="#s-sign">20. KMS Sign 签 ETH 交易（私钥不出 KMS）</a></li><li><a href="#s-signneg">21. 对照：parent 用同一个角色也能让 KMS 签</a></li><li><a href="#s-seal">22. 封口：扩展并锁定 PCR16，之后 KMS 什么都不给</a></li><li><a href="#s-changed">23. 改镜像：cmdline 多一个 quiet，PCR0 就变了</a></li><li><a href="#s-debug">24. debug 模式：PCR0/1/2 全是零</a></li><li><a href="#s-restore">25. 恢复原配置重启：PCR0 和第一次一样，又能解开了</a></li><li><a href="#s-send">26. （可选）在 Sepolia 上真的转一笔</a></li><li><a href="#s-trail">27. 在 CloudTrail 里看是谁签的</a></li></ol></li>
+<li class="toc-part"><span>清理</span><ol><li><a href="#s-clean">28. 清理</a></li></ol></li>
+    </ul>
+    <ul>
+      <li><a href="#a-results">A 的结果</a></li>
+      <li><a href="#b-results">B 的结果</a></li>
+      <li><a href="#pitfalls">常见问题</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <section id="what">
+      <h2>测的是什么</h2>
+      <p>所有测试都在同一台 parent 上做。Sandbox 是 parent 上用 Firecracker 起的 microVM，Nitro 把它的内存和 parent 隔开，并通过 /dev/nsm 给出签过名的 attestation 文档。</p>
+      <dl class="env">
+        <dt>机器</dt><dd>i7i.2xlarge（8 vCPU，64 GiB），1 块 1875 GB NVMe instance store，us-west-1 按需价 $0.83/小时；实例角色 nitro-sandbox-workshop</dd>
+        <dt>系统</dt><dd>Amazon Linux 2023，kernel 6.18.62，Firecracker v1.18.0，内存池 48 GiB</dd>
+        <dt>Sandbox</dt><dd>confidential 模式（非 debug），4 个独占 vCPU，4 GiB 内存；内核用 parent 的 /boot/vmlinuz，initrd 由 dracut 生成，rootfs 是 Ubuntu 24.04</dd>
+        <dt>A 部分</dt><dd>fio <code>direct=1</code>：大文件写入、大块顺序写、顺序读、4K 随机读、4K 随机写、QD1 读延迟，parent 直测和 Sandbox 各跑一遍</dd>
+        <dt>B 部分</dt><dd>KMS key 只认这台 Sandbox 的 PCR0：带 attestation 解密和 ETH 钱包；不带 attestation、parent、封口、改镜像、debug 模式都必须被拒；外加 KMS Sign 签 ETH 交易和 Sepolia 真转一笔</dd>
+        <dt>机器分工</dt><dd>标着"工作机"的步骤在你自己的电脑上做（装好 AWS CLI v2、git、python3），其余都在 parent 上做；两边都要 clone 这个仓库。Sandbox 里不用手动操作，脚本会自己 ssh 进去</dd>
+      </dl>
+    </section>
+
+    <section id="prep">
+      <h2>准备</h2>
+      <p>A 和 B 共用这几步。</p>
+      <ol class="steps">
+<li class="step" id="s-clone">
+  <div class="step-n" aria-hidden="true">1</div>
+  <div class="step-b">
+    <h3>clone 仓库，填好 workshop.env <span class="where where-w">在 工作机 上</span></h3>
+    <p>工作机要装好 AWS CLI v2（已配置好管理员凭证）、git、python3。workshop.env 里填 parent 用的子网、安全组和 EC2 key pair；安全组要放行你电脑的 22 端口。workshop.env 在 .gitignore 里，不会被提交。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>git clone https://github.com/sunchaoqun/nitro-sandbox.git
+cd nitro-sandbox
+cp workshop.env.example workshop.env
+vi workshop.env<span class="c">        # 改 AWS_REGION、SUBNET_ID、SG_ID、KEY_NAME、PEM</span></code></pre></div>
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/workshop.env.example">workshop.env.example</a>（6 行）</summary><pre><code># cp workshop.env.example workshop.env，然后改下面几项（只在工作机上需要）
+AWS_REGION=us-west-1
+SUBNET_ID=subnet-xxxxxxxxxxxxxxxxx      # parent 放在哪个子网（要能从你的电脑 ssh 进去）
+SG_ID=sg-xxxxxxxxxxxxxxxxx              # 安全组，要放行你电脑的 22 端口
+KEY_NAME=my-key                         # EC2 key pair 名字
+PEM=~/.ssh/my-key.pem                   # 对应的私钥</code></pre></details><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/config.sh">config.sh</a>（12 行）</summary><pre><code># 所有脚本共用的配置。要改的话：cp workshop.env.example workshop.env，再改 workshop.env（它不会被提交到 git）
+_REPO=$(cd &quot;$(dirname &quot;${BASH_SOURCE[0]}&quot;)&quot; &amp;&amp; pwd)
+[ -f &quot;$_REPO/workshop.env&quot; ] &amp;&amp; source &quot;$_REPO/workshop.env&quot;
+export AWS_REGION=${AWS_REGION:-us-west-1}
+export AWS_PAGER=&quot;&quot;                                                        # 不让 AWS CLI 把输出交给 less
+INSTANCE_TYPE=${INSTANCE_TYPE:-i7i.2xlarge}                               # 要带 instance store、支持 Nitro Enclave
+MEMPOOL=${MEMPOOL:-48G}                                                   # Sandbox 内存池，比实例内存少 ~16G
+ROLE_NAME=${ROLE_NAME:-nitro-sandbox-workshop}                            # 实例角色 / instance profile
+ETH_KEY_ALIAS=${ETH_KEY_ALIAS:-alias/nitro-sandbox-workshop-eth}          # KMS Sign 用的 secp256k1 key
+ATTEST_KEY_ALIAS=${ATTEST_KEY_ALIAS:-alias/nitro-sandbox-workshop-attest} # 只认 PCR0 的对称 key
+WORK=${WORK:-$HOME/bench}                                                 # parent 上的工作目录（镜像、结果）
+FC_VERSION=${FC_VERSION:-v1.18.0}</code></pre></details></div>
+    
+  </div>
+</li>
+<li class="step" id="s-prereq">
+  <div class="step-n" aria-hidden="true">2</div>
+  <div class="step-b">
+    <h3>创建实例角色和 ETH 签名 key <span class="where where-w">在 工作机 上</span></h3>
+    <p>ETH key 是 KMS 里的 secp256k1 密钥，私钥不出 KMS。实例角色只能对它做 Sign/GetPublicKey，外加 GenerateRandom（NSM 探针用）。已经有了会跳过，可以重复执行。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash workstation/prereq.sh</code></pre></div>
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/workstation/prereq.sh">workstation/prereq.sh</a>（36 行）</summary><pre><code>#!/usr/bin/env bash
+# 【工作机】实例角色 + ETH 签名 key。已经有了就跳过，可以重复执行。
+set -euo pipefail
+source &quot;$(dirname &quot;$0&quot;)/../config.sh&quot;
+ACCT=$(aws sts get-caller-identity --query Account --output text)
+echo &quot;账号 $ACCT，区域 $AWS_REGION&quot;
+
+# 1) KMS 里的 secp256k1 签名 key：私钥不出 KMS，用 kms:Sign 签以太坊交易
+if aws kms describe-key --key-id &quot;$ETH_KEY_ALIAS&quot; &gt;/dev/null 2&gt;&amp;1; then
+  echo &quot;ETH key 已存在：$ETH_KEY_ALIAS&quot;
+else
+  KEY_ID=$(aws kms create-key --key-spec ECC_SECG_P256K1 --key-usage SIGN_VERIFY \
+    --description &quot;nitro sandbox workshop: eth signer&quot; --query KeyMetadata.KeyId --output text)
+  aws kms create-alias --alias-name &quot;$ETH_KEY_ALIAS&quot; --target-key-id &quot;$KEY_ID&quot;
+  echo &quot;ETH key 已创建：$ETH_KEY_ALIAS（$KEY_ID）&quot;
+fi
+ETH_KEY_ARN=$(aws kms describe-key --key-id &quot;$ETH_KEY_ALIAS&quot; --query KeyMetadata.Arn --output text)
+
+# 2) 实例角色：只能对这把 ETH key 做 Sign/GetPublicKey，外加 GenerateRandom（NSM 探针用）
+if aws iam get-role --role-name &quot;$ROLE_NAME&quot; &gt;/dev/null 2&gt;&amp;1; then
+  echo &quot;角色已存在：$ROLE_NAME&quot;
+else
+  aws iam create-role --role-name &quot;$ROLE_NAME&quot; --query Role.Arn --output text --assume-role-policy-document \
+    &#x27;{&quot;Version&quot;:&quot;2012-10-17&quot;,&quot;Statement&quot;:[{&quot;Effect&quot;:&quot;Allow&quot;,&quot;Principal&quot;:{&quot;Service&quot;:&quot;ec2.amazonaws.com&quot;},&quot;Action&quot;:&quot;sts:AssumeRole&quot;}]}&#x27;
+fi
+aws iam put-role-policy --role-name &quot;$ROLE_NAME&quot; --policy-name kms-eth-sign --policy-document \
+  &quot;{\&quot;Version\&quot;:\&quot;2012-10-17\&quot;,\&quot;Statement\&quot;:[{\&quot;Effect\&quot;:\&quot;Allow\&quot;,\&quot;Action\&quot;:[\&quot;kms:Sign\&quot;,\&quot;kms:GetPublicKey\&quot;],\&quot;Resource\&quot;:\&quot;$ETH_KEY_ARN\&quot;}]}&quot;
+aws iam put-role-policy --role-name &quot;$ROLE_NAME&quot; --policy-name kms-generate-random --policy-document \
+  &#x27;{&quot;Version&quot;:&quot;2012-10-17&quot;,&quot;Statement&quot;:[{&quot;Effect&quot;:&quot;Allow&quot;,&quot;Action&quot;:&quot;kms:GenerateRandom&quot;,&quot;Resource&quot;:&quot;*&quot;}]}&#x27;
+if ! aws iam get-instance-profile --instance-profile-name &quot;$ROLE_NAME&quot; &gt;/dev/null 2&gt;&amp;1; then
+  aws iam create-instance-profile --instance-profile-name &quot;$ROLE_NAME&quot; &gt;/dev/null
+  aws iam add-role-to-instance-profile --instance-profile-name &quot;$ROLE_NAME&quot; --role-name &quot;$ROLE_NAME&quot;
+  echo &quot;instance profile 已创建，等 15 秒让它生效&quot;; sleep 15
+fi
+echo &quot;角色策略：$(aws iam list-role-policies --role-name &quot;$ROLE_NAME&quot; --query &#x27;PolicyNames&#x27; --output text)&quot;
+echo &quot;完成&quot;</code></pre></details></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>账号 111122223333，区域 us-west-1
+ETH key 已创建：alias/nitro-sandbox-workshop-eth（abcd1234-ab12-cd34-ef56-abcdef123456）
+arn:aws:iam::111122223333:role/nitro-sandbox-workshop
+instance profile 已创建，等 15 秒让它生效
+角色策略：kms-eth-sign	kms-generate-random
+完成
+
+# 再执行一次：
+账号 111122223333，区域 us-west-1
+ETH key 已存在：alias/nitro-sandbox-workshop-eth
+角色已存在：nitro-sandbox-workshop
+角色策略：kms-eth-sign	kms-generate-random
+完成</pre></div>
+  </div>
+</li>
+<li class="step" id="s-launch">
+  <div class="step-n" aria-hidden="true">3</div>
+  <div class="step-b">
+    <h3>开一台带 instance store 的 parent <span class="where where-w">在 工作机 上</span></h3>
+    <p>默认 i7i.2xlarge：自带一块 1875 GB 的 NVMe instance store，支持 Nitro Enclave（Sandbox 走同一个开关）。AMI 用最新的 AL2023 kernel-6.18，它的驱动才支持 Sandbox。实例 ID 会记在仓库根目录的 .parent 里，清理时要用。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash workstation/launch-parent.sh</code></pre></div>
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/workstation/launch-parent.sh">workstation/launch-parent.sh</a>（25 行）</summary><pre><code>#!/usr/bin/env bash
+# 【工作机】开一台带 instance store 的 parent（默认 i7i.2xlarge：8 vCPU / 64 GiB / 1×1875 GB NVMe）
+set -euo pipefail
+REPO=$(cd &quot;$(dirname &quot;$0&quot;)/..&quot; &amp;&amp; pwd)
+source &quot;$REPO/config.sh&quot;
+for v in SUBNET_ID SG_ID KEY_NAME PEM; do
+  [ -n &quot;${!v:-}&quot; ] &amp;&amp; [[ &quot;${!v}&quot; != *xxxx* ]] || { echo &quot;先在 workshop.env 里填 $v（cp workshop.env.example workshop.env）&quot;; exit 1; }
+done
+# 实例角色给 attestation/ETH 测试用；Sandbox 经过 NAT 访问 IMDS 要多一跳，所以 hop limit 设 2
+IID=$(aws ec2 run-instances \
+  --image-id resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.18-x86_64 \
+  --instance-type &quot;$INSTANCE_TYPE&quot; --enclave-options Enabled=true \
+  --iam-instance-profile Name=&quot;$ROLE_NAME&quot; \
+  --metadata-options HttpTokens=required,HttpPutResponseHopLimit=2,HttpEndpoint=enabled \
+  --key-name &quot;$KEY_NAME&quot; --subnet-id &quot;$SUBNET_ID&quot; --security-group-ids &quot;$SG_ID&quot; \
+  --block-device-mappings &#x27;[{&quot;DeviceName&quot;:&quot;/dev/xvda&quot;,&quot;Ebs&quot;:{&quot;VolumeSize&quot;:30,&quot;VolumeType&quot;:&quot;gp3&quot;}}]&#x27; \
+  --tag-specifications &#x27;ResourceType=instance,Tags=[{Key=Name,Value=nitro-sandbox-workshop}]&#x27; \
+  --query &#x27;Instances[0].InstanceId&#x27; --output text)
+aws ec2 wait instance-running --instance-ids &quot;$IID&quot;
+read PRIV PUB &lt;&lt;&lt;&quot;$(aws ec2 describe-instances --instance-ids &quot;$IID&quot; \
+  --query &#x27;Reservations[0].Instances[0].[PrivateIpAddress,PublicIpAddress]&#x27; --output text)&quot;
+printf &#x27;IID=%s\nPUBLIC_IP=%s\nPRIVATE_IP=%s\n&#x27; &quot;$IID&quot; &quot;$PUB&quot; &quot;$PRIV&quot; | tee &quot;$REPO/.parent&quot;
+echo &quot;大约 1 分钟后可以登录：&quot;
+[ &quot;$PUB&quot; != &quot;None&quot; ] &amp;&amp; echo &quot;  从公网：ssh -i $PEM ec2-user@$PUB&quot;
+echo &quot;  从同一个 VPC 里：ssh -i $PEM ec2-user@$PRIV&quot;</code></pre></details></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>IID=i-0123456789abcdef0
+PUBLIC_IP=203.0.113.25
+PRIVATE_IP=10.0.1.25
+大约 1 分钟后可以登录：
+  从公网：ssh -i ~/.ssh/my-key.pem ec2-user@203.0.113.25
+  从同一个 VPC 里：ssh -i ~/.ssh/my-key.pem ec2-user@10.0.1.25</pre></div>
+  </div>
+</li>
+<li class="step" id="s-pclone">
+  <div class="step-n" aria-hidden="true">4</div>
+  <div class="step-b">
+    <h3>登录 parent，clone 仓库 <span class="where where-p">在 parent 上</span></h3>
+    <p>用上一步打印的 ssh 命令登录。parent 上也要一份仓库，后面的脚本都从这里执行。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>sudo dnf install -y -q git
+git clone https://github.com/sunchaoqun/nitro-sandbox.git
+cd nitro-sandbox</code></pre></div>
+    
+    <div class="out"><div class="out-h">预期输出</div><pre>Cloning into &#x27;nitro-sandbox&#x27;...</pre></div>
+  </div>
+</li>
+<li class="step" id="s-setup">
+  <div class="step-n" aria-hidden="true">5</div>
+  <div class="step-b">
+    <h3>装 fio 和 Firecracker，预留内存池（会重启） <span class="where where-p">在 parent 上</span></h3>
+    <p>Sandbox 的内存来自驱动预留的连续内存池，不预留就起不来。脚本最后会重启 parent，1 分钟后重新登录，并 cd ~/nitro-sandbox。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/setup.sh</code></pre></div>
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/setup.sh">parent/setup.sh</a>（19 行）</summary><pre><code>#!/usr/bin/env bash
+# 【parent】确认驱动支持 Sandbox，装 fio 和 Firecracker，预留内存池，然后重启
+set -euo pipefail
+source &quot;$(dirname &quot;$0&quot;)/../config.sh&quot;
+uname -r                                  # 要 ≥ 6.18.51-120.162.amzn2023
+ls /sys/class/misc/nitro_enclaves/        # 必须有 cpu_pool  mem_pool  pcie_slots
+
+sudo dnf install -y -q fio squashfs-tools iptables-nft
+ARCH=$(uname -m); TMP=$(mktemp -d)
+curl -fsSL https://github.com/firecracker-microvm/firecracker/releases/download/$FC_VERSION/firecracker-$FC_VERSION-$ARCH.tgz | tar -xz -C &quot;$TMP&quot;
+sudo install -m 0755 &quot;$TMP/release-$FC_VERSION-$ARCH/firecracker-$FC_VERSION-$ARCH&quot; /usr/local/bin/firecracker
+firecracker --version | head -1           # Firecracker v1.18.0
+
+# 内存池：不预留的话 Firecracker 报 &quot;No space left on device (os error 28)&quot;。
+# 留得大一点是故意的：page cache 不会用内存池，parent 只剩 ~13 GB 能缓存，读测试不会被缓存抬高
+sudo grubby --update-kernel=ALL --remove-args=&quot;nitro_enclaves.mempool&quot;
+sudo grubby --update-kernel=ALL --args=&quot;nitro_enclaves.mempool=$MEMPOOL&quot;
+echo &quot;即将重启，1 分钟后重新登录&quot;
+sudo systemctl reboot</code></pre></details></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>6.18.62-127.179.amzn2023.x86_64
+cpu_pool
+dev
+device_pool
+mem_pool
+pcie_slots
+pcie_slots_in_use
+pcie_slots_total
+power
+subsystem
+uevent
+
+Installed:
+  fio-3.32-2.amzn2023.0.3.x86_64                                                
+  fio-engine-http-3.32-2.amzn2023.0.3.x86_64                                    
+  fio-engine-libaio-3.32-2.amzn2023.0.3.x86_64                                  
+  fio-engine-rdma-3.32-2.amzn2023.0.3.x86_64                                    
+  iptables-libs-1.8.8-3.amzn2023.0.2.x86_64                                     
+  iptables-nft-1.8.8-3.amzn2023.0.2.x86_64                                      
+  libnetfilter_conntrack-1.0.8-2.amzn2023.0.2.x86_64                            
+  libnfnetlink-1.0.1-19.amzn2023.0.2.x86_64                                     
+  libnftnl-1.2.2-2.amzn2023.0.2.x86_64                                          
+  librdmacm-48.0-1.amzn2023.0.1.x86_64                                          
+  lzo-2.10-4.amzn2023.0.2.x86_64                                                
+  squashfs-tools-4.5-3.amzn2023.0.2.x86_64                                      
+
+Firecracker v1.18.0
+即将重启，1 分钟后重新登录</pre></div>
+  </div>
+</li>
+<li class="step" id="s-reboot">
+  <div class="step-n" aria-hidden="true">6</div>
+  <div class="step-b">
+    <h3>确认内存池，记下 instance store 的稳定路径 <span class="where where-p">在 parent 上</span></h3>
+    <p>NVMe 的编号每次开机都可能变：实测重启后 nvme1n1 一次是 instance store，一次是 EBS 根盘。所以后面一律用按序列号的 /dev/disk/by-id 路径，脚本会确认型号是 Instance Storage。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>cd ~/nitro-sandbox
+bash parent/after-reboot.sh</code></pre></div>
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/after-reboot.sh">parent/after-reboot.sh</a>（14 行）</summary><pre><code>#!/usr/bin/env bash
+# 【parent】重启后：确认内存池，找到 instance store 的稳定路径
+set -euo pipefail
+source &quot;$(dirname &quot;$0&quot;)/../config.sh&quot;
+grep -o &#x27;nitro_enclaves.mempool=[^ ]*&#x27; /proc/cmdline
+echo &quot;mem_pool: $(( $(cat /sys/class/misc/nitro_enclaves/mem_pool/total) / 1048576 )) MiB&quot;
+echo &quot;pcie_slots: $(cat /sys/class/misc/nitro_enclaves/pcie_slots)&quot;   # ≥ 4
+lsblk -d -o NAME,SIZE,MODEL
+
+# NVMe 的编号重启后会变（实测：nvme1n1 一次是 instance store，一次是 EBS 根盘），一律用 by-id 路径
+mkdir -p &quot;$WORK&quot;
+ISD=/dev/disk/by-id/$(ls /dev/disk/by-id/ | grep -E &#x27;^nvme-Amazon_EC2_NVMe_Instance_Storage_[A-Za-z0-9]+$&#x27; | head -1)
+lsblk -dno MODEL &quot;$(readlink -f &quot;$ISD&quot;)&quot; | grep -q &quot;Instance Storage&quot; || { echo &quot;没找到 instance store&quot;; exit 1; }
+echo &quot;ISD=$ISD&quot; | tee &quot;$WORK/env&quot;</code></pre></details></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>nitro_enclaves.mempool=48G
+mem_pool: 49152 MiB
+pcie_slots: 4
+NAME     SIZE MODEL
+nvme0n1   30G Amazon Elastic Block Store
+nvme1n1  1.7T Amazon EC2 NVMe Instance Storage
+ISD=/dev/disk/by-id/nvme-Amazon_EC2_NVMe_Instance_Storage_AWS1234567890ABCDEF0</pre></div>
+  </div>
+</li>
+<li class="step" id="s-guest">
+  <div class="step-n" aria-hidden="true">7</div>
+  <div class="step-b">
+    <h3>准备 Sandbox 的内核、initrd 和 rootfs <span class="where where-p">在 parent 上</span></h3>
+    <p>内核直接用 parent 自己的 /boot/vmlinuz，dracut 打一个带 virtio 和 nsm 驱动的 initrd；rootfs 是 Firecracker CI 的 Ubuntu 24.04，chroot 进去装好 fio。大约 30 秒，debconf 的提示可以忽略。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/build-guest.sh</code></pre></div>
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/build-guest.sh">parent/build-guest.sh</a>（30 行）</summary><pre><code>#!/usr/bin/env bash
+# 【parent】准备 Sandbox：内核用 parent 自己的，initrd 用 dracut 生成，rootfs 用 Firecracker CI 的 Ubuntu 24.04 + fio
+set -euo pipefail
+source &quot;$(dirname &quot;$0&quot;)/../config.sh&quot;
+cd &quot;$WORK&quot;
+K=$(uname -r)
+sudo dracut --force --no-hostonly --add-drivers &quot;virtio_pci virtio_blk virtio_net nsm&quot; initrd.img &quot;$K&quot; 2&gt;/dev/null
+sudo ls -la initrd.img
+
+S3=https://s3.amazonaws.com/spec.ccfc.min
+P=$(curl -fsSL &quot;$S3?list-type=2&amp;prefix=firecracker-ci/&amp;delimiter=/&quot; \
+    | grep -oP &quot;(?&lt;=&lt;Prefix&gt;)firecracker-ci/[0-9]{8}-[^/]+/(?=&lt;/Prefix&gt;)&quot; | sort | tail -1)
+curl -fsSL -o ubuntu.squashfs &quot;$S3/${P}x86_64/ubuntu-24.04.squashfs&quot;
+sudo rm -rf rootfs &amp;&amp; sudo unsquashfs -q -d rootfs ubuntu.squashfs &gt;/dev/null
+
+rm -f id_rsa id_rsa.pub &amp;&amp; ssh-keygen -f id_rsa -N &quot;&quot; -q
+sudo mkdir -p rootfs/root/.ssh &amp;&amp; sudo cp id_rsa.pub rootfs/root/.ssh/authorized_keys
+# CI 镜像精简掉了 apt 要用的目录；resolv.conf 是空的
+sudo mkdir -p rootfs/var/tmp rootfs/var/log/apt rootfs/var/cache/apt/archives/partial \
+  rootfs/var/lib/apt/lists/partial rootfs/var/cache/debconf rootfs/var/lib/dpkg/updates
+sudo chmod 1777 rootfs/tmp rootfs/var/tmp
+echo &quot;nameserver 169.254.169.253&quot; | sudo tee rootfs/etc/resolv.conf &gt;/dev/null
+
+for d in proc sys dev dev/pts; do sudo mount --bind /$d rootfs/$d; done
+sudo chroot rootfs /usr/bin/env LC_ALL=C DEBIAN_FRONTEND=noninteractive /bin/bash -c \
+  &#x27;apt-get update -qq &amp;&amp; apt-get install -y -qq --no-install-recommends fio &gt;/dev/null &amp;&amp; fio --version; apt-get clean&#x27;
+for d in dev/pts dev sys proc; do sudo umount rootfs/$d; done
+echo &quot;rootfs 上残留的挂载：$(mount | grep -c &quot;$WORK/rootfs&quot; || true)&quot;     # 必须是 0
+
+truncate -s 4G rootfs.ext4 &amp;&amp; sudo mkfs.ext4 -q -F -d rootfs rootfs.ext4 &amp;&amp; ls -la rootfs.ext4</code></pre></details></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>-rw-------. 1 root root 23570747 Nov 17 03:21 initrd.img
+debconf: delaying package configuration, since apt-utils is not installed
+fio-3.36
+rootfs 上残留的挂载：0
+-rw-rw-r--. 1 ec2-user ec2-user 4294967296 Nov 17 03:22 rootfs.ext4</pre></div>
+  </div>
+</li>
+      </ol>
+    </section>
+
+    <section id="partA">
+      <h2>A. 把整块 instance store 交给 Sandbox，读写有多快</h2>
+      <p>同一块盘、同一套 fio 参数，先在 parent 上直接测，再在 Sandbox 里测。</p>
+      <ol class="steps">
+<li class="step" id="s-local">
+  <div class="step-n" aria-hidden="true">8</div>
+  <div class="step-b">
+    <h3>测 parent 直测（这时 Sandbox 还没开） <span class="where where-p">在 parent 上</span></h3>
+    <p>直接读写 instance store，作为对比基线。会清空盘上的数据。大约 4 分钟。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/bench.sh local</code></pre></div>
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/bench.sh">parent/bench.sh</a>（36 行）</summary><pre><code>#!/usr/bin/env bash
+# 【parent】同一套 fio 测试，分别跑在 parent 直测和 Sandbox 里。会清空 instance store 上的数据！
+#   bash parent/bench.sh local     直接测 parent 上的 instance store（Sandbox 不要开着）
+#   bash parent/bench.sh sandbox   测 Sandbox 里的 /dev/vdb（就是同一块 instance store）
+# 结果：$WORK/results/&lt;local|sandbox&gt;/*.json
+set -euo pipefail
+source &quot;$(dirname &quot;$0&quot;)/../config.sh&quot;
+cd &quot;$WORK&quot; &amp;&amp; source &quot;$WORK/env&quot;
+MODE=${1:?用法: bash parent/bench.sh local|sandbox}
+OUT=$WORK/results/$MODE; mkdir -p &quot;$OUT&quot;
+SB=&quot;ssh -n -i $WORK/id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@172.16.0.2&quot;
+case $MODE in
+  local)   DEV=$ISD;     X() { sudo &quot;$@&quot;; }
+           pgrep -x firecracker &gt;/dev/null &amp;&amp; { echo &quot;先停掉 Sandbox：sudo pkill -x firecracker&quot;; exit 1; } ;;
+  sandbox) DEV=/dev/vdb; X() { $SB &quot;$(printf &#x27;%q &#x27; &quot;$@&quot;)&quot;; } ;;
+  *) echo &quot;用法: bash parent/bench.sh local|sandbox&quot;; exit 1 ;;
+esac
+FIO=(fio --direct=1 --ioengine=libaio --group_reporting --norandommap --randrepeat=0 --output-format=json)
+T=(--time_based --runtime=30 --ramp_time=5 --size=64G)          # 都在盘的前 64 GiB 里测
+run() {   # 每项之前清一次 parent 的 page cache（Firecracker 的读写会经过它）
+  local name=$1; shift
+  sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches &gt;/dev/null
+  echo &quot;$(date +%T) $MODE: $name&quot;
+  X &quot;${FIO[@]}&quot; --name=$name &quot;$@&quot; &gt; &quot;$OUT/$name.json&quot;
+}
+run 1-seqwrite-64g    --filename=$DEV --rw=write --bs=1M --iodepth=32 --size=64G --end_fsync=1   # 先写满测试区（没写过的地方读起来特别快）
+run 2-randread-4k     --filename=$DEV --rw=randread --bs=4k --iodepth=32 --numjobs=4 &quot;${T[@]}&quot;
+run 3-randread-4k-qd1 --filename=$DEV --rw=randread --bs=4k --iodepth=1 &quot;${T[@]}&quot;
+run 4-randwrite-4k    --filename=$DEV --rw=randwrite --bs=4k --iodepth=32 --numjobs=4 --end_fsync=1 &quot;${T[@]}&quot;
+run 5-seqread-1m      --filename=$DEV --rw=read --bs=1M --iodepth=32 &quot;${T[@]}&quot;
+# 大文件：在 ext4 上写一个 64 GiB 的文件（largefile + 关掉 lazy init，避免后台初始化干扰）
+X mkfs.ext4 -q -F -T largefile -E nodiscard,lazy_itable_init=0,lazy_journal_init=0 $DEV
+X mkdir -p /mnt/bench; X mount $DEV /mnt/bench
+run 6-bigfile-64g     --filename=/mnt/bench/big.dat --rw=write --bs=1M --iodepth=32 --size=64G --end_fsync=1
+X umount /mnt/bench
+echo &quot;$(date +%T) $MODE: 完成 → $OUT&quot;</code></pre></details></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>03:22:23 local: 1-seqwrite-64g
+03:23:03 local: 2-randread-4k
+03:23:39 local: 3-randread-4k-qd1
+03:24:15 local: 4-randwrite-4k
+03:24:50 local: 5-seqread-1m
+03:25:26 local: 6-bigfile-64g
+03:26:07 local: 完成 → /home/ec2-user/bench/results/local</pre></div>
+  </div>
+</li>
+<li class="step" id="s-start">
+  <div class="step-n" aria-hidden="true">9</div>
+  <div class="step-b">
+    <h3>启动 Sandbox，把整块 instance store 交给它 <span class="where where-p">在 parent 上</span></h3>
+    <p>confidential 模式（非 debug），4 个独占 vCPU，4 GiB 内存。数据盘的两个关键配置：io_engine 设成 Async，cache_type 设成 Writeback（让 Sandbox 里的 fsync 真正落盘）。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/start-sandbox.sh</code></pre></div>
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/start-sandbox.sh">parent/start-sandbox.sh</a>（32 行）</summary><pre><code>#!/usr/bin/env bash
+# 【parent】tap0（parent 经它 SSH 进 Sandbox），写配置，启动 Sandbox，把整块 instance store 交给它
+set -euo pipefail
+source &quot;$(dirname &quot;$0&quot;)/../config.sh&quot;
+cd &quot;$WORK&quot; &amp;&amp; source &quot;$WORK/env&quot;
+ip link show tap0 &gt;/dev/null 2&gt;&amp;1 || sudo ip tuntap add dev tap0 mode tap
+sudo ip addr replace 172.16.0.1/30 dev tap0 &amp;&amp; sudo ip link set tap0 up
+
+cat &gt; vm.json &lt;&lt;JSON
+{
+  &quot;boot-source&quot;: {
+    &quot;kernel_image_path&quot;: &quot;/boot/vmlinuz-$(uname -r)&quot;,
+    &quot;initrd_path&quot;: &quot;$WORK/initrd.img&quot;,
+    &quot;boot_args&quot;: &quot;panic=1 initcall_blacklist=i8042_init net.ifnames=0 rd.driver.pre=virtio_pci,virtio_blk,nsm&quot;
+  },
+  &quot;machine-config&quot;: { &quot;vcpu_count&quot;: 4, &quot;mem_size_mib&quot;: 4096 },
+  &quot;drives&quot;: [
+    { &quot;drive_id&quot;: &quot;rootfs&quot;, &quot;path_on_host&quot;: &quot;$WORK/rootfs.ext4&quot;, &quot;is_root_device&quot;: true, &quot;is_read_only&quot;: false },
+    { &quot;drive_id&quot;: &quot;data&quot;, &quot;path_on_host&quot;: &quot;$ISD&quot;, &quot;is_root_device&quot;: false, &quot;is_read_only&quot;: false,
+      &quot;io_engine&quot;: &quot;Async&quot;, &quot;cache_type&quot;: &quot;Writeback&quot; }
+  ],
+  &quot;network-interfaces&quot;: [ { &quot;iface_id&quot;: &quot;eth0&quot;, &quot;guest_mac&quot;: &quot;06:00:AC:10:00:02&quot;, &quot;host_dev_name&quot;: &quot;tap0&quot; } ],
+  &quot;enclave&quot;: { &quot;cpu_overcommit&quot;: false }
+}
+JSON
+sudo pkill -x firecracker 2&gt;/dev/null &amp;&amp; sleep 1 || true
+sudo rm -f /tmp/fc.sock
+sudo setsid nohup firecracker --api-sock /tmp/fc.sock --config-file vm.json &gt; fc.log 2&gt;&amp;1 &lt; /dev/null &amp;
+SB=(ssh -n -i &quot;$WORK/id_rsa&quot; -o ConnectTimeout=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@172.16.0.2)
+for i in $(seq 1 60); do &quot;${SB[@]}&quot; true 2&gt;/dev/null &amp;&amp; break; sleep 2; done
+grep -E &quot;Attaching enclave block|debug=&quot; fc.log | sed &#x27;s/.*main\] //&#x27;
+&quot;${SB[@]}&quot; &#x27;echo &quot;vCPU: $(nproc)&quot;; lsblk -d -o NAME,SIZE /dev/vdb; ls -la /dev/nsm&#x27;</code></pre></details></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>Attaching enclave block device id=rootfs
+Attaching enclave block device id=data
+Starting enclave with start_flags=0x0 (debug=false)
+vCPU: 4
+NAME  SIZE
+vdb   1.7T
+crw-rw-rw- 1 root root 10, 258 Nov 17 03:26 /dev/nsm</pre></div>
+  </div>
+</li>
+<li class="step" id="s-sandbox">
+  <div class="step-n" aria-hidden="true">10</div>
+  <div class="step-b">
+    <h3>测 Sandbox <span class="where where-p">在 parent 上</span></h3>
+    <p>同一块盘、同样的 fio 参数，这次在 Sandbox 里对 /dev/vdb 跑。大约 8 分钟（写入慢，见结果）。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/bench.sh sandbox</code></pre></div>
+    
+    <div class="out"><div class="out-h">预期输出</div><pre>03:26:36 sandbox: 1-seqwrite-64g
+03:29:24 sandbox: 2-randread-4k
+03:30:01 sandbox: 3-randread-4k-qd1
+03:30:37 sandbox: 4-randwrite-4k
+03:31:30 sandbox: 5-seqread-1m
+03:32:10 sandbox: 6-bigfile-64g
+03:34:54 sandbox: 完成 → /home/ec2-user/bench/results/sandbox</pre></div>
+  </div>
+</li>
+<li class="step" id="s-compare">
+  <div class="step-n" aria-hidden="true">11</div>
+  <div class="step-b">
+    <h3>对比结果 <span class="where where-p">在 parent 上</span></h3>
+    <p>读应该在 parent 直测的 85～100%，大块写和大文件写在 25% 上下。和下面 A 的结果对一下。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>python3 parent/compare.py</code></pre></div>
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/compare.py">parent/compare.py</a>（29 行）</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;【parent】对比 parent 直测和 Sandbox：python3 parent/compare.py（读 $WORK/results，默认 ~/bench/results）&quot;&quot;&quot;
+import json, os
+R = os.path.join(os.environ.get(&quot;WORK&quot;, os.path.expanduser(&quot;~/bench&quot;)), &quot;results&quot;)
+TESTS = [  # (文件, 显示名, 指标)
+    (&quot;1-seqwrite-64g&quot;, &quot;大块顺序写 64 GiB（裸设备，1M QD32，含 fsync）&quot;, &quot;MB/s&quot;),
+    (&quot;6-bigfile-64g&quot;, &quot;大文件写入 64 GiB（ext4 文件，1M QD32，含 fsync）&quot;, &quot;MB/s&quot;),
+    (&quot;5-seqread-1m&quot;, &quot;顺序读（1M QD32）&quot;, &quot;MB/s&quot;),
+    (&quot;2-randread-4k&quot;, &quot;4K 随机读（QD32×4）&quot;, &quot;IOPS&quot;),
+    (&quot;4-randwrite-4k&quot;, &quot;4K 随机写（QD32×4，含 fsync）&quot;, &quot;IOPS&quot;),
+    (&quot;3-randread-4k-qd1&quot;, &quot;4K 随机读延迟（QD1，平均 / p99）&quot;, &quot;µs&quot;),
+]
+def load(mode, name):
+    raw = open(f&quot;{R}/{mode}/{name}.json&quot;).read()
+    return json.loads(raw[raw.index(&quot;{&quot;):])[&quot;jobs&quot;][0]
+def value(j, unit):
+    s = j[&quot;read&quot;] if j[&quot;read&quot;][&quot;io_bytes&quot;] else j[&quot;write&quot;]
+    if unit == &quot;MB/s&quot;:   # 按 job_runtime 算（包含最后的 fsync）
+        return s[&quot;io_bytes&quot;] / 1e6 / (j[&quot;job_runtime&quot;] / 1000), None
+    if unit == &quot;IOPS&quot;:
+        return s[&quot;iops&quot;], None
+    return s[&quot;clat_ns&quot;][&quot;mean&quot;] / 1000, s[&quot;clat_ns&quot;][&quot;percentile&quot;][&quot;99.000000&quot;] / 1000
+print(f&quot;{&#x27;测试&#x27;:&lt;44}{&#x27;parent 直测&#x27;:&gt;16}{&#x27;Sandbox&#x27;:&gt;16}{&#x27;Sandbox/直测&#x27;:&gt;14}&quot;)
+for name, label, unit in TESTS:
+    (a, ap), (b, bp) = value(load(&quot;local&quot;, name), unit), value(load(&quot;sandbox&quot;, name), unit)
+    if unit == &quot;µs&quot;:
+        print(f&quot;{label:&lt;40}{f&#x27;{a:.0f} / {ap:.0f} µs&#x27;:&gt;22}{f&#x27;{b:.0f} / {bp:.0f} µs&#x27;:&gt;18}{f&#x27;+{b - a:.0f} µs&#x27;:&gt;14}&quot;)
+    else:
+        print(f&quot;{label:&lt;40}{f&#x27;{a:,.0f} {unit}&#x27;:&gt;22}{f&#x27;{b:,.0f} {unit}&#x27;:&gt;18}{f&#x27;{100 * b / a:.0f}%&#x27;:&gt;14}&quot;)</code></pre></details></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>测试                                                 parent 直测         Sandbox    Sandbox/直测
+大块顺序写 64 GiB（裸设备，1M QD32，含 fsync）                   1,738 MB/s          419 MB/s           24%
+大文件写入 64 GiB（ext4 文件，1M QD32，含 fsync）               1,705 MB/s          421 MB/s           25%
+顺序读（1M QD32）                                        2,134 MB/s        2,139 MB/s          100%
+4K 随机读（QD32×4）                                    300,465 IOPS      265,267 IOPS           88%
+4K 随机写（QD32×4，含 fsync）                            165,119 IOPS      162,969 IOPS           99%
+4K 随机读延迟（QD1，平均 / p99）                              73 / 83 µs       98 / 212 µs        +25 µs</pre></div>
+  </div>
+</li>
+<li class="step" id="s-sync">
+  <div class="step-n" aria-hidden="true">12</div>
+  <div class="step-b">
+    <h3>（可选）看看默认的 Sync 引擎有多慢 <span class="where where-p">在 parent 上</span></h3>
+    <p>把 io_engine 去掉再测一次随机读和顺序读。这一步说明了为什么启动 Sandbox 那一步一定要写 Async。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/sync-test.sh</code></pre></div>
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/sync-test.sh">parent/sync-test.sh</a>（18 行）</summary><pre><code>#!/usr/bin/env bash
+# 【parent】可选：去掉 io_engine（默认 Sync），看 Firecracker 默认配置下随机读有多慢。测完用 start-sandbox.sh 恢复
+set -uo pipefail
+source &quot;$(dirname &quot;$0&quot;)/../config.sh&quot;
+cd &quot;$WORK&quot;
+SB=&quot;ssh -n -i $WORK/id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@172.16.0.2&quot;
+$SB poweroff 2&gt;/dev/null; sleep 5; sudo pkill -x firecracker; sleep 1
+sed &#x27;s/&quot;io_engine&quot;: &quot;Async&quot;, //&#x27; vm.json &gt; vm-sync.json &amp;&amp; grep -c io_engine vm-sync.json   # 0
+sudo rm -f /tmp/fc.sock
+sudo setsid nohup firecracker --api-sock /tmp/fc.sock --config-file vm-sync.json &gt; fc.log 2&gt;&amp;1 &lt; /dev/null &amp;
+for i in $(seq 1 60); do $SB true 2&gt;/dev/null &amp;&amp; break; sleep 2; done
+mkdir -p results/sandbox-sync
+FIO=&quot;fio --direct=1 --ioengine=libaio --group_reporting --norandommap --randrepeat=0 --output-format=json --filename=/dev/vdb --time_based --runtime=30 --ramp_time=5 --size=64G&quot;
+for t in &quot;2-randread-4k --rw=randread --bs=4k --iodepth=32 --numjobs=4&quot; &quot;5-seqread-1m --rw=read --bs=1M --iodepth=32&quot;; do
+  set -- $t; sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches &gt;/dev/null
+  $SB &quot;$FIO --name=$*&quot; &gt; results/sandbox-sync/$1.json
+  python3 -c &quot;import json,sys; r=json.load(open(sys.argv[1]))[&#x27;jobs&#x27;][0][&#x27;read&#x27;]; print(sys.argv[2], f&#x27;{r[\&quot;iops\&quot;]:,.0f} IOPS&#x27;, f&#x27;{r[\&quot;io_bytes\&quot;]/1e6/(r[\&quot;runtime\&quot;]/1000):,.0f} MB/s&#x27;)&quot; results/sandbox-sync/$1.json $1
+done</code></pre></details></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>0
+2-randread-4k 12,927 IOPS 53 MB/s
+5-seqread-1m 592 IOPS 622 MB/s</pre></div>
+  </div>
+</li>
+      </ol>
+    </section>
+
+    <section id="a-results">
+      <h2>A 的结果：读和直测几乎一样，写只有四分之一</h2>
+      <figure class="path">
+        <svg viewBox="0 0 1000 300" role="img" aria-labelledby="pathTitle pathDesc">
+          <title id="pathTitle">两条 I/O 路径</title>
+          <desc id="pathDesc">parent 直测时，fio 用 O_DIRECT 直接读写 NVMe。Sandbox 里的 fio 要依次经过 virtio-blk、DMB 共享缓冲区、parent 上的 Firecracker 和 parent 的 page cache，才到同一块 NVMe。</desc>
+          <g id="pathArt"></g>
+        </svg>
+        <figcaption>两条路径终点是同一块盘。Sandbox 的每次读写都要先交给 parent 上的 Firecracker 进程处理；Firecracker 不用 O_DIRECT，写入要经过 parent 的 page cache 回写，这就是写入变慢的地方。</figcaption>
+      </figure>
+      <div class="tiles" aria-label="Sandbox 相对 parent 直测">
+<div class="tile"><div class="tile-l">4K 随机读</div><div class="tile-v">88%</div><div class="tile-s">265,267 对 300,465 IOPS</div></div>
+<div class="tile"><div class="tile-l">顺序读</div><div class="tile-v">100%</div><div class="tile-s">2,139 对 2,134 MB/s</div></div>
+<div class="tile"><div class="tile-l">大文件写入</div><div class="tile-v">25%</div><div class="tile-s">421 对 1,705 MB/s</div></div>
+<div class="tile"><div class="tile-l">读延迟（QD1）</div><div class="tile-v">+25 µs</div><div class="tile-s">平均 98 对 73 µs</div></div>
+      </div>
+      <h3 class="sub">每一项</h3>
+      <p class="prose">每张图有自己的刻度，条越长越好；延迟那张条越短越好。悬停或用 Tab 键聚焦到条上可以看具体数字。</p>
+      <div class="legend" aria-hidden="true"><span><i style="background:var(--local)"></i>parent 直测</span><span><i style="background:var(--sandbox)"></i>Sandbox</span></div>
+      <div class="charts" id="charts"></div>
+      <div class="tools"><button class="tbtn" type="button" data-table="resultsTable">用表格查看</button></div>
+      <div class="tablewrap" id="resultsTable" hidden></div>
+      <p class="note">另一轮是在另一台 i7i.2xlarge 上用同样的步骤测的。两台机器相比，Sandbox/直测：4K 随机读 88～93%，4K 随机写 99～113%，顺序读 100%，大块顺序写 24～25%，大文件写入 25%。</p>
+
+      <h3 class="sub" id="engine">io_engine 一定要写 Async</h3>
+      <p class="prose">Firecracker 块设备默认用 Sync 引擎，一次只处理一个请求，队列深度再大也没用。第 12 步实测：同样的盘、同样的 fio，Sync 下 4K 随机读只有 Async 的 1/21。</p>
+      <div class="legend" aria-hidden="true"><span><i style="background:var(--sandbox)"></i>Sandbox，Async</span><span><i style="background:var(--sync)"></i>Sandbox，Sync（默认）</span></div>
+      <div class="charts" id="engineCharts"></div>
+
+      <h3 class="sub">怎么看</h3>
+      <ul class="prose">
+        <li><strong>读几乎不受影响。</strong>顺序读是直测的 100%，4K 随机读是 88%。代价在延迟：每次读多 25 µs（经过 virtio、DMB 和 Firecracker 用户态），p99 从 83 µs 变成 230 µs。</li>
+        <li><strong>大块写和大文件写只有直测的 25% 左右</strong>（约 421 MB/s）。Firecracker 打开设备时不用 O_DIRECT，写入要先进 parent 的 page cache 再回写，fsync 要等回写完成。这是 Sandbox 写入的瓶颈，调 DMB 大小没有用。</li>
+        <li><strong>4K 随机写是直测的 99%，不代表 Sandbox 写得更快。</strong>直测是纯随机的 4K O_DIRECT；Sandbox 的写先进 parent 的 page cache，内核回写时按偏移排序、把相邻的 4K 合并成大块。fsync 的时间已经算进去了。测试区越大、写得越分散，这个优势越小。</li>
+        <li><strong>parent 能读到 Sandbox 写进盘的明文</strong>（数据路径经过 parent）。需要保密就在 Sandbox 里用 dm-crypt 加密，实测开销几乎为零；要防篡改再加 dm-integrity（LUKS2 AEAD），代价主要在写：随机写降到 1/8 左右，一次 fdatasync 约 440 µs。</li>
+      </ul>
+    </section>
+
+    <section id="partB">
+      <h2>B. Attestation 和 ETH 签名</h2>
+      <p>先建一把只认这台 Sandbox 的 PCR0 的 KMS key，然后逐一试：谁能解密、谁能拿到 ETH 钱包私钥、谁能让 KMS 签交易。步骤顺序就是实测时的顺序，后面的步骤依赖前面留下的密文和钱包。</p>
+      <ol class="steps">
+<li class="step" id="s-pydeps">
+  <div class="step-n" aria-hidden="true">13</div>
+  <div class="step-b">
+    <h3>给 rootfs 装 Python 依赖和脚本，配好 NAT <span class="where where-p">在 parent 上</span></h3>
+    <p>把 sandbox/ 下的 4 个 Python 脚本装进 Sandbox 的 rootfs；Sandbox 要经 parent 的 NAT 访问 IMDS（实例角色的凭证）、KMS 和以太坊 RPC。rootfs 不在 PCR 的度量范围内，所以装依赖不影响 PCR0。大约 30 秒。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/attest-setup.sh</code></pre></div>
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/attest-setup.sh">parent/attest-setup.sh</a>（43 行）</summary><pre><code>#!/usr/bin/env bash
+# 【parent】给 rootfs 装上 attestation / KMS / ETH 要用的 Python 依赖和脚本，配好 NAT（Sandbox 要访问 IMDS 和 KMS）
+set -uo pipefail
+REPO=$(cd &quot;$(dirname &quot;$0&quot;)/..&quot; &amp;&amp; pwd)
+source &quot;$REPO/config.sh&quot;
+cd &quot;$WORK&quot;
+sudo pkill -x firecracker; sleep 1                     # rootfs.ext4 要重建，先停掉 Sandbox
+sudo cp &quot;$REPO&quot;/sandbox/*.py rootfs/root/
+# CI 镜像的 fcnet-setup.sh 只配 IP、不配默认路由
+sudo tee rootfs/etc/systemd/system/fcnet-route.service &gt;/dev/null &lt;&lt;&#x27;UNIT&#x27;
+[Unit]
+Description=Default route via the parent&#x27;s tap
+After=fcnet.service
+Requires=fcnet.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/ip route replace default via 172.16.0.1 dev eth0
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+sudo ln -sf /etc/systemd/system/fcnet-route.service rootfs/etc/systemd/system/multi-user.target.wants/fcnet-route.service
+
+for d in proc sys dev dev/pts; do sudo mount --bind /$d rootfs/$d; done
+sudo chroot rootfs /usr/bin/env LC_ALL=C DEBIAN_FRONTEND=noninteractive /bin/bash -c &#x27;
+  apt-get update -qq &amp;&amp; apt-get install -y -qq --no-install-recommends python3-venv &gt;/dev/null &amp;&amp;
+  python3 -m venv /opt/kms &amp;&amp; /opt/kms/bin/pip install -q boto3 cbor2 asn1crypto cryptography eth-account rlp &amp;&amp;
+  /opt/kms/bin/python -c &quot;import boto3, cbor2, eth_account; print(\&quot;deps OK\&quot;, boto3.__version__, eth_account.__version__)&quot;
+  apt-get clean&#x27;
+for d in dev/pts dev sys proc; do sudo umount rootfs/$d; done
+echo &quot;rootfs 上残留的挂载：$(mount | grep -c &quot;$WORK/rootfs&quot;)&quot;   # 必须是 0
+sudo rm -f rootfs/etc/systemd/system/timers.target.wants/apt-daily*.timer
+truncate -s 4G rootfs.ext4 &amp;&amp; sudo mkfs.ext4 -q -F -d rootfs rootfs.ext4
+
+HOST_IF=$(ip route show default | awk &#x27;{print $5; exit}&#x27;)
+sudo sysctl -qw net.ipv4.ip_forward=1
+sudo iptables -t nat -C POSTROUTING -s 172.16.0.0/30 -o $HOST_IF -j MASQUERADE 2&gt;/dev/null || \
+  sudo iptables -t nat -A POSTROUTING -s 172.16.0.0/30 -o $HOST_IF -j MASQUERADE
+sudo iptables -C FORWARD -i tap0 -o $HOST_IF -j ACCEPT 2&gt;/dev/null || sudo iptables -I FORWARD 1 -i tap0 -o $HOST_IF -j ACCEPT
+sudo iptables -C FORWARD -o tap0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2&gt;/dev/null || \
+  sudo iptables -I FORWARD 1 -o tap0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+echo &quot;NAT OK（$HOST_IF）&quot;</code></pre></details><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/attest.sh">parent/attest.sh</a>（63 行）</summary><pre><code>#!/usr/bin/env bash
+# 【parent】attestation / ETH 测试的统一入口。Sandbox 里的命令经 ssh 执行，parent 自己的命令用的是同一个实例角色。
+#   bash parent/attest.sh restart normal|changed|debug  用原配置 / cmdline 多一个 quiet（PCR0 会变）/ debug 模式重启 Sandbox
+#   bash parent/attest.sh probe                         NSM 探针：打印 PCR，调 KMS GenerateRandom(Recipient)
+#   bash parent/attest.sh encrypt [文本] | decrypt | decrypt-noattest | parent-decrypt | seal
+#   bash parent/attest.sh wallet-create | wallet-sign | wallet-noattest | parent-wallet-decrypt    attestation 保护的 ETH 钱包
+#   bash parent/attest.sh eth-sign | parent-eth-sign    KMS Sign 签 ETH 交易（私钥不出 KMS，但 kms:Sign 没有 attestation）
+#   bash parent/attest.sh eth-send | eth-receipt &lt;交易哈希&gt;   签名并广播到 Sepolia（地址里要有测试币）/ 查是否上链
+#   bash parent/attest.sh stop                          停掉 Sandbox
+set -uo pipefail
+source &quot;$(dirname &quot;$0&quot;)/../config.sh&quot;
+cd &quot;$WORK&quot; &amp;&amp; source &quot;$WORK/env&quot;
+TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H &quot;X-aws-ec2-metadata-token-ttl-seconds: 60&quot;)
+REGION=$(curl -s -H &quot;X-aws-ec2-metadata-token: $TOKEN&quot; http://169.254.169.254/latest/meta-data/placement/region)
+KEY=$ATTEST_KEY_ALIAS                                # attestation 用的 KMS key（create-attest-key.sh 创建）
+ETH_KEY=$ETH_KEY_ALIAS                               # KMS Sign 用的 secp256k1 key（prereq.sh 创建）
+RPC=${RPC:-https://ethereum-sepolia-rpc.publicnode.com}
+SB=(ssh -n -i $WORK/id_rsa -o ConnectTimeout=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@172.16.0.2)
+py() { &quot;${SB[@]}&quot; &quot;cd /root &amp;&amp; AWS_REGION=$REGION /opt/kms/bin/python $*&quot;; }
+
+case &quot;${1:-}&quot; in
+  restart)
+    case &quot;${2:-normal}&quot; in
+      normal)  cp vm.json vm-run.json ;;
+      changed) sed &#x27;s/net.ifnames=0/net.ifnames=0 quiet/&#x27; vm.json &gt; vm-run.json; grep -q &#x27;ifnames=0 quiet&#x27; vm-run.json ;;
+      debug)   sed &#x27;s/&quot;cpu_overcommit&quot;: false/&quot;debug_mode&quot;: true, &quot;cpu_overcommit&quot;: false/&#x27; vm.json &gt; vm-run.json; grep -q debug_mode vm-run.json ;;
+      *) echo &quot;用法: bash parent/attest.sh restart normal|changed|debug&quot;; exit 1 ;;
+    esac
+    &quot;${SB[@]}&quot; poweroff 2&gt;/dev/null
+    for i in $(seq 1 20); do pgrep -x firecracker &gt;/dev/null || break; sleep 1; done
+    sudo pkill -x firecracker; sudo rm -f /tmp/fc.sock
+    sudo setsid nohup firecracker --api-sock /tmp/fc.sock --config-file vm-run.json &gt; fc.log 2&gt;&amp;1 &lt; /dev/null &amp;
+    for i in $(seq 1 60); do &quot;${SB[@]}&quot; true 2&gt;/dev/null &amp;&amp; { echo &quot;Sandbox 已启动（$2）&quot;; exit 0; }; sleep 2; done
+    echo &quot;Sandbox 没起来：&quot;; tail -5 fc.log; exit 1 ;;
+  probe)            py nitro_attest.py ;;
+  stop)             &quot;${SB[@]}&quot; poweroff 2&gt;/dev/null; sleep 5; sudo pkill -x firecracker; pgrep -x firecracker &gt;/dev/null || echo &quot;Sandbox 已停&quot; ;;
+  encrypt)          py kms_attest_poc.py --key-id $KEY encrypt &quot;$(printf &#x27;%q&#x27; &quot;${2:-hello nitro sandbox}&quot;)&quot; ;;
+  decrypt)          py kms_attest_poc.py --key-id $KEY decrypt ;;
+  decrypt-noattest) py kms_attest_poc.py --key-id $KEY decrypt --no-attestation ;;
+  seal)             py kms_attest_poc.py --key-id $KEY seal ;;
+  parent-decrypt)
+    &quot;${SB[@]}&quot; cat /root/secret.b64 | base64 -d &gt; /tmp/secret.bin
+    aws kms decrypt --region $REGION --ciphertext-blob fileb:///tmp/secret.bin --query Plaintext --output text ;;
+  wallet-create)    py kms_attest_wallet.py --key-id $KEY create ;;
+  wallet-sign)      py kms_attest_wallet.py --key-id $KEY sign ;;
+  wallet-noattest)  py kms_attest_wallet.py --key-id $KEY decrypt-noattest ;;
+  parent-wallet-decrypt)
+    &quot;${SB[@]}&quot; cat /root/wallet.json | python3 -c &#x27;import json,sys,base64; sys.stdout.buffer.write(base64.b64decode(json.load(sys.stdin)[&quot;private_key_ciphertext&quot;]))&#x27; &gt; /tmp/wallet.bin
+    aws kms decrypt --region $REGION --ciphertext-blob fileb:///tmp/wallet.bin \
+      --encryption-context purpose=sandbox-eth-wallet --query Plaintext --output text ;;
+  eth-sign)         py kms_sign_tx.py --key-id $ETH_KEY --to 0x000000000000000000000000000000000000dEaD --value-wei 1000000000000000 ;;
+  eth-send)         py kms_sign_tx.py --key-id $ETH_KEY --rpc $RPC --to 0x000000000000000000000000000000000000dEaD --value-wei 1000000000000000 --send ;;
+  eth-receipt)
+    curl -s -H &#x27;Content-Type: application/json&#x27; -d &quot;{\&quot;jsonrpc\&quot;:\&quot;2.0\&quot;,\&quot;id\&quot;:1,\&quot;method\&quot;:\&quot;eth_getTransactionReceipt\&quot;,\&quot;params\&quot;:[\&quot;${2:?要交易哈希}\&quot;]}&quot; $RPC \
+      | python3 -c &#x27;import json,sys
+r = json.load(sys.stdin)[&quot;result&quot;]
+if r is None: print(&quot;还没上链，过几秒再查&quot;)
+else: b, st, fr = int(r[&quot;blockNumber&quot;], 16), r[&quot;status&quot;], r[&quot;from&quot;]; print(f&quot;区块 {b}  status {st}（0x1 = 成功）  from {fr}&quot;)&#x27; ;;
+  parent-eth-sign)  # parent 用同一个角色直接让 KMS 签一个任意的 32 字节摘要
+    aws kms sign --region $REGION --key-id $ETH_KEY --message-type DIGEST --signing-algorithm ECDSA_SHA_256 \
+      --message &quot;$(head -c 32 /dev/urandom | base64)&quot; --query &#x27;[KeyId,SigningAlgorithm]&#x27; --output text ;;
+  *) sed -n &#x27;2,10p&#x27; &quot;$0&quot;; exit 1 ;;
+esac</code></pre></details><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/sandbox/nitro_attest.py">sandbox/nitro_attest.py</a>（138 行）</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;Nitro Sandbox 里的 attestation 工具：向 /dev/nsm 要 attestation 文档、解析 PCR、
+解开 KMS 用 Recipient 返回的 CiphertextForRecipient（CMS EnvelopedData）。
+
+直接运行就是可行性探针：拿 attestation 文档 → 打印 PCR → 调 KMS GenerateRandom(Recipient)
+→ 在本地解开结果。能跑通说明 NSM 可用，而且 KMS 接受这台 Sandbox 的 attestation 文档。
+&quot;&quot;&quot;
+import argparse
+import ctypes
+import fcntl
+import os
+
+import cbor2
+from asn1crypto import cms
+from cryptography.hazmat.primitives import hashes, padding, serialization
+from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+# include/uapi/linux/nsm.h：_IOWR(0x0A, 0, struct nsm_raw)，struct nsm_raw 是两个 {u64 addr; u64 len}
+NSM_IOCTL_RAW = (3 &lt;&lt; 30) | (32 &lt;&lt; 16) | (0x0A &lt;&lt; 8) | 0
+NSM_RESPONSE_MAX_SIZE = 0x3000
+
+
+def nsm_request(request, device=&quot;/dev/nsm&quot;):
+    req = cbor2.dumps(request)
+    req_buf = ctypes.create_string_buffer(req, len(req))
+    resp_buf = ctypes.create_string_buffer(NSM_RESPONSE_MAX_SIZE)
+    msg = (ctypes.c_uint64 * 4)(ctypes.addressof(req_buf), len(req),
+                                ctypes.addressof(resp_buf), NSM_RESPONSE_MAX_SIZE)
+    fd = os.open(device, os.O_RDWR)
+    try:
+        fcntl.ioctl(fd, NSM_IOCTL_RAW, msg, True)
+    finally:
+        os.close(fd)
+    return cbor2.loads(resp_buf.raw[:msg[3]])
+
+
+def attestation_document(public_key_der=None, user_data=None, nonce=None):
+    resp = nsm_request({&quot;Attestation&quot;: {&quot;user_data&quot;: user_data, &quot;nonce&quot;: nonce,
+                                        &quot;public_key&quot;: public_key_der}})
+    if &quot;Attestation&quot; not in resp:
+        raise RuntimeError(f&quot;NSM 返回错误: {resp}&quot;)
+    return resp[&quot;Attestation&quot;][&quot;document&quot;]
+
+
+def describe_pcr(index):
+    resp = nsm_request({&quot;DescribePCR&quot;: {&quot;index&quot;: index}})
+    if &quot;DescribePCR&quot; not in resp:
+        raise RuntimeError(f&quot;NSM 返回错误: {resp}&quot;)
+    return resp[&quot;DescribePCR&quot;][&quot;data&quot;], resp[&quot;DescribePCR&quot;][&quot;lock&quot;]
+
+
+def extend_pcr(index, data):
+    # PCR16～31 可以在运行时扩展：new = SHA384(old || data)，不能撤销，重启才清零
+    resp = nsm_request({&quot;ExtendPCR&quot;: {&quot;index&quot;: index, &quot;data&quot;: data}})
+    if &quot;ExtendPCR&quot; not in resp:
+        raise RuntimeError(f&quot;NSM 返回错误: {resp}&quot;)
+    return resp[&quot;ExtendPCR&quot;][&quot;data&quot;]
+
+
+def lock_pcr(index):
+    # 锁定后不能再扩展；attestation 文档只包含已锁定的 PCR
+    resp = nsm_request({&quot;LockPCR&quot;: {&quot;index&quot;: index}})
+    if resp != &quot;LockPCR&quot; and not (isinstance(resp, dict) and &quot;LockPCR&quot; in resp):
+        raise RuntimeError(f&quot;NSM 返回错误: {resp}&quot;)
+
+
+def parse_attestation_document(doc):
+    # COSE_Sign1：[protected, unprotected, payload, signature]，可能带 CBOR tag 18
+    cose = cbor2.loads(doc)
+    if isinstance(cose, cbor2.CBORTag):
+        cose = cose.value
+    return cbor2.loads(cose[2])
+
+
+def new_recipient_key():
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pub_der = key.public_key().public_bytes(serialization.Encoding.DER,
+                                            serialization.PublicFormat.SubjectPublicKeyInfo)
+    return key, pub_der
+
+
+def cms_decrypt(ciphertext_for_recipient, private_key):
+    &quot;&quot;&quot;解开 KMS 的 CiphertextForRecipient：RSAES-OAEP-SHA256 包着内容密钥，内容用 AES-CBC 加密。&quot;&quot;&quot;
+    info = cms.ContentInfo.load(ciphertext_for_recipient)
+    if info[&quot;content_type&quot;].native != &quot;enveloped_data&quot;:
+        raise ValueError(f&quot;不是 EnvelopedData: {info[&#x27;content_type&#x27;].native}&quot;)
+    env = info[&quot;content&quot;]
+    ktri = env[&quot;recipient_infos&quot;][0].chosen
+    kea = ktri[&quot;key_encryption_algorithm&quot;]
+    if kea[&quot;algorithm&quot;].native != &quot;rsaes_oaep&quot;:
+        raise ValueError(f&quot;不支持的密钥加密算法: {kea[&#x27;algorithm&#x27;].native}&quot;)
+    cek = private_key.decrypt(ktri[&quot;encrypted_key&quot;].native, asym_padding.OAEP(
+        mgf=asym_padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
+    eci = env[&quot;encrypted_content_info&quot;]
+    alg = eci[&quot;content_encryption_algorithm&quot;]
+    if alg[&quot;algorithm&quot;].native not in (&quot;aes128_cbc&quot;, &quot;aes192_cbc&quot;, &quot;aes256_cbc&quot;):
+        raise ValueError(f&quot;不支持的内容加密算法: {alg[&#x27;algorithm&#x27;].dotted}&quot;)
+    dec = Cipher(algorithms.AES(cek), modes.CBC(alg[&quot;parameters&quot;].native)).decryptor()
+    padded = dec.update(eci[&quot;encrypted_content&quot;].native) + dec.finalize()
+    unpadder = padding.PKCS7(128).unpadder()
+    return unpadder.update(padded) + unpadder.finalize()
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument(&quot;--region&quot;, default=os.environ.get(&quot;AWS_REGION&quot;) or os.environ.get(&quot;AWS_DEFAULT_REGION&quot;))
+    p.add_argument(&quot;--skip-kms&quot;, action=&quot;store_true&quot;, help=&quot;只测 NSM，不调 KMS&quot;)
+    a = p.parse_args()
+
+    key, pub_der = new_recipient_key()
+    doc = attestation_document(public_key_der=pub_der)
+    payload = parse_attestation_document(doc)
+    print(f&quot;attestation 文档: {len(doc)} 字节, module_id={payload.get(&#x27;module_id&#x27;)}, digest={payload.get(&#x27;digest&#x27;)}&quot;)
+    for idx in sorted(payload[&quot;pcrs&quot;]):
+        val = payload[&quot;pcrs&quot;][idx]
+        if any(val):
+            print(f&quot;  PCR{idx:&lt;2} {val.hex()}&quot;)
+    zero = [i for i, v in payload[&quot;pcrs&quot;].items() if not any(v)]
+    print(f&quot;  全零的 PCR: {sorted(zero)}（debug_mode 下 0/1/2 全零是正常的）&quot;)
+
+    if a.skip_kms:
+        return
+    import boto3
+    if not a.region:
+        raise SystemExit(&quot;需要 --region 或者环境变量 AWS_REGION&quot;)
+    kms = boto3.client(&quot;kms&quot;, region_name=a.region)
+    resp = kms.generate_random(NumberOfBytes=32, Recipient={
+        &quot;KeyEncryptionAlgorithm&quot;: &quot;RSAES_OAEP_SHA_256&quot;, &quot;AttestationDocument&quot;: doc})
+    if resp.get(&quot;Plaintext&quot;):
+        raise SystemExit(&quot;KMS 返回了明文，说明它没有按 attestation 处理&quot;)
+    rnd = cms_decrypt(resp[&quot;CiphertextForRecipient&quot;], key)
+    print(f&quot;KMS GenerateRandom(Recipient) OK：在 Sandbox 里解开了 {len(rnd)} 字节 → KMS 接受这份 attestation 文档&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre></details><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/sandbox/kms_attest_poc.py">sandbox/kms_attest_poc.py</a>（89 行）</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;Nitro Sandbox + KMS attestation POC：在 Sandbox 里加密数据，再带 attestation 解密。
+
+encrypt                  普通的 KMS Encrypt（不需要 attestation）
+decrypt                  NSM 生成 attestation 文档（带临时 RSA 公钥）→ KMS Decrypt(Recipient) → 本地解开 CiphertextForRecipient
+decrypt --no-attestation 不带 attestation 直接 Decrypt，用来验证 key policy 会拒绝
+pcr16                    查看 PCR16
+seal                     封口：扩展并锁定 PCR16。attestation 文档只包含已锁定的 PCR，key policy 规定
+                         &quot;文档里出现 PCR16 就拒绝&quot;，所以封口后直到重启都拿不到 KMS 的东西
+
+依赖同目录的 nitro_attest.py。
+&quot;&quot;&quot;
+import argparse
+import base64
+import hashlib
+import os
+import sys
+import time
+
+import boto3
+from botocore.exceptions import ClientError
+
+import nitro_attest as na
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument(&quot;--key-id&quot;, default=&quot;alias/sandbox-attest-poc&quot;)
+    p.add_argument(&quot;--region&quot;, default=os.environ.get(&quot;AWS_REGION&quot;) or os.environ.get(&quot;AWS_DEFAULT_REGION&quot;))
+    sub = p.add_subparsers(dest=&quot;cmd&quot;, required=True)
+    enc = sub.add_parser(&quot;encrypt&quot;)
+    enc.add_argument(&quot;text&quot;)
+    enc.add_argument(&quot;--out&quot;, default=&quot;secret.b64&quot;)
+    dec = sub.add_parser(&quot;decrypt&quot;)
+    dec.add_argument(&quot;--in&quot;, dest=&quot;infile&quot;, default=&quot;secret.b64&quot;)
+    dec.add_argument(&quot;--no-attestation&quot;, action=&quot;store_true&quot;)
+    sub.add_parser(&quot;pcr16&quot;)
+    sub.add_parser(&quot;seal&quot;)
+    a = p.parse_args()
+
+    if a.cmd == &quot;pcr16&quot;:
+        data, locked = na.describe_pcr(16)
+        print(f&quot;PCR16: {data.hex()}  lock={locked}  {&#x27;已封口&#x27; if locked else &#x27;未封口&#x27;}&quot;)
+        return
+    if a.cmd == &quot;seal&quot;:
+        before, _ = na.describe_pcr(16)
+        after = na.extend_pcr(16, hashlib.sha384(f&quot;sealed {time.time()}&quot;.encode()).digest())
+        na.lock_pcr(16)
+        print(&quot;PCR16 封口前:&quot;, before.hex())
+        print(&quot;PCR16 封口后:&quot;, after.hex(), &quot;（已锁定，不能再改）&quot;)
+        print(&quot;从现在起到重启前，这个 Sandbox 的 attestation 都不再满足 key policy&quot;)
+        return
+
+    if not a.region:
+        raise SystemExit(&quot;需要 --region 或者环境变量 AWS_REGION&quot;)
+    kms = boto3.client(&quot;kms&quot;, region_name=a.region)
+
+    if a.cmd == &quot;encrypt&quot;:
+        resp = kms.encrypt(KeyId=a.key_id, Plaintext=a.text.encode())
+        with open(a.out, &quot;w&quot;) as f:
+            f.write(base64.b64encode(resp[&quot;CiphertextBlob&quot;]).decode())
+        print(f&quot;已加密 → {a.out}（KeyId: {resp[&#x27;KeyId&#x27;]}）&quot;)
+        return
+
+    blob = base64.b64decode(open(a.infile).read())
+    try:
+        if a.no_attestation:
+            resp = kms.decrypt(CiphertextBlob=blob, KeyId=a.key_id)
+            print(&quot;没带 attestation 也解开了:&quot;, resp[&quot;Plaintext&quot;].decode(), &quot;← key policy 没有生效！&quot;)
+            sys.exit(1)
+        key, pub_der = na.new_recipient_key()
+        doc = na.attestation_document(public_key_der=pub_der)
+        pcrs = na.parse_attestation_document(doc)[&quot;pcrs&quot;]
+        print(&quot;本次 attestation 的 PCR0 :&quot;, pcrs[0].hex())
+        print(&quot;本次 attestation 的 PCR16:&quot;, pcrs[16].hex() + &quot;（已封口）&quot; if 16 in pcrs else &quot;不在文档里（未封口）&quot;)
+        resp = kms.decrypt(CiphertextBlob=blob, KeyId=a.key_id, Recipient={
+            &quot;KeyEncryptionAlgorithm&quot;: &quot;RSAES_OAEP_SHA_256&quot;, &quot;AttestationDocument&quot;: doc})
+    except ClientError as err:
+        e = err.response[&quot;Error&quot;]
+        print(f&quot;KMS 拒绝: {e[&#x27;Code&#x27;]} - {e[&#x27;Message&#x27;]}&quot;)
+        sys.exit(2)
+    if resp.get(&quot;Plaintext&quot;):
+        raise SystemExit(&quot;KMS 返回了明文，说明它没有按 attestation 处理&quot;)
+    print(&quot;KeyId   :&quot;, resp[&quot;KeyId&quot;])
+    print(&quot;解密结果:&quot;, na.cms_decrypt(resp[&quot;CiphertextForRecipient&quot;], key).decode())
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre></details><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/sandbox/kms_attest_wallet.py">sandbox/kms_attest_wallet.py</a>（114 行）</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;attestation 保护的以太坊钱包：私钥只在 Sandbox 内存里，parent 拿不到。
+
+create            KMS GenerateDataKeyPair(ECC_SECG_P256K1) + Recipient：KMS 只把私钥加密给 attestation 里的临时 RSA 公钥
+                  （CiphertextForRecipient），在 Sandbox 里解开；wallet.json 只存地址、公钥和加密的私钥
+sign              Decrypt(加密的私钥) + Recipient → 在 Sandbox 里签一笔 EIP-1559 交易，再独立验证发送方
+decrypt-noattest  不带 attestation 解密私钥，用来验证 key policy 会拒绝
+
+依赖同目录的 nitro_attest.py。
+&quot;&quot;&quot;
+import argparse
+import base64
+import json
+import os
+import sys
+
+import boto3
+from botocore.exceptions import ClientError
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from eth_account import Account
+from eth_utils import keccak, to_checksum_address
+
+import nitro_attest as na
+
+CONTEXT = {&quot;purpose&quot;: &quot;sandbox-eth-wallet&quot;}   # 加密上下文：解密时必须一致
+
+
+def address_of(public_key):
+    raw = public_key.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+    return to_checksum_address(keccak(raw[1:])[-20:])
+
+
+def with_attestation(call):
+    &quot;&quot;&quot;生成临时 RSA 密钥 → NSM attestation 文档（带公钥）→ 调 KMS → 在本地解开 CiphertextForRecipient。&quot;&quot;&quot;
+    key, pub_der = na.new_recipient_key()
+    doc = na.attestation_document(public_key_der=pub_der)
+    pcrs = na.parse_attestation_document(doc)[&quot;pcrs&quot;]
+    print(&quot;本次 attestation 的 PCR0:&quot;, pcrs[0].hex()[:16] + &quot;…&quot;, &quot;（文档里有 PCR16 = 已封口）&quot; if 16 in pcrs else &quot;&quot;)
+    resp = call({&quot;KeyEncryptionAlgorithm&quot;: &quot;RSAES_OAEP_SHA_256&quot;, &quot;AttestationDocument&quot;: doc})
+    if resp.get(&quot;Plaintext&quot;) or resp.get(&quot;PrivateKeyPlaintext&quot;):
+        raise SystemExit(&quot;KMS 返回了明文，说明它没有按 attestation 处理&quot;)
+    return na.cms_decrypt(resp[&quot;CiphertextForRecipient&quot;], key), resp
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument(&quot;--key-id&quot;, default=&quot;alias/sandbox-attest-bench&quot;)
+    p.add_argument(&quot;--region&quot;, default=os.environ.get(&quot;AWS_REGION&quot;) or os.environ.get(&quot;AWS_DEFAULT_REGION&quot;))
+    p.add_argument(&quot;--wallet&quot;, default=&quot;wallet.json&quot;)
+    sub = p.add_subparsers(dest=&quot;cmd&quot;, required=True)
+    sub.add_parser(&quot;create&quot;)
+    s = sub.add_parser(&quot;sign&quot;)
+    s.add_argument(&quot;--to&quot;, default=&quot;0x000000000000000000000000000000000000dEaD&quot;)
+    s.add_argument(&quot;--value-wei&quot;, type=int, default=10**15)
+    s.add_argument(&quot;--chain-id&quot;, type=int, default=11155111, help=&quot;默认 Sepolia&quot;)
+    s.add_argument(&quot;--nonce&quot;, type=int, default=0)
+    sub.add_parser(&quot;decrypt-noattest&quot;)
+    a = p.parse_args()
+    if not a.region:
+        raise SystemExit(&quot;需要 --region 或者环境变量 AWS_REGION&quot;)
+    kms = boto3.client(&quot;kms&quot;, region_name=a.region)
+
+    try:
+        if a.cmd == &quot;create&quot;:
+            pkcs8, resp = with_attestation(lambda r: kms.generate_data_key_pair(
+                KeyId=a.key_id, KeyPairSpec=&quot;ECC_SECG_P256K1&quot;, EncryptionContext=CONTEXT, Recipient=r))
+            priv = serialization.load_der_private_key(pkcs8, password=None)
+            assert isinstance(priv.curve, ec.SECP256K1)
+            addr = address_of(priv.public_key())
+            if addr != address_of(serialization.load_der_public_key(resp[&quot;PublicKey&quot;])):
+                raise SystemExit(&quot;私钥和 KMS 返回的公钥对不上&quot;)
+            json.dump({&quot;key_id&quot;: resp[&quot;KeyId&quot;], &quot;address&quot;: addr,
+                       &quot;public_key&quot;: base64.b64encode(resp[&quot;PublicKey&quot;]).decode(),
+                       &quot;private_key_ciphertext&quot;: base64.b64encode(resp[&quot;PrivateKeyCiphertextBlob&quot;]).decode()},
+                      open(a.wallet, &quot;w&quot;), indent=1)
+            print(&quot;钱包地址      :&quot;, addr)
+            print(f&quot;已保存 {a.wallet}：只有地址、公钥和加密的私钥，明文私钥没有写盘&quot;)
+            return
+
+        w = json.load(open(a.wallet))
+        blob = base64.b64decode(w[&quot;private_key_ciphertext&quot;])
+        if a.cmd == &quot;decrypt-noattest&quot;:
+            kms.decrypt(CiphertextBlob=blob, KeyId=a.key_id, EncryptionContext=CONTEXT)
+            print(&quot;没带 attestation 也解开了 ← key policy 没有生效！&quot;)
+            sys.exit(1)
+
+        pkcs8, resp = with_attestation(lambda r: kms.decrypt(
+            CiphertextBlob=blob, KeyId=a.key_id, EncryptionContext=CONTEXT, Recipient=r))
+        if resp[&quot;KeyId&quot;] != w[&quot;key_id&quot;]:
+            raise SystemExit(f&quot;KMS 用的 key 不对：{resp[&#x27;KeyId&#x27;]}&quot;)
+        priv = serialization.load_der_private_key(pkcs8, password=None)
+        acct = Account.from_key(priv.private_numbers().private_value.to_bytes(32, &quot;big&quot;))
+        if acct.address != w[&quot;address&quot;]:
+            raise SystemExit(&quot;解出来的私钥和钱包地址对不上&quot;)
+        tx = {&quot;type&quot;: 2, &quot;chainId&quot;: a.chain_id, &quot;nonce&quot;: a.nonce, &quot;to&quot;: to_checksum_address(a.to), &quot;value&quot;: a.value_wei,
+              &quot;gas&quot;: 21000, &quot;maxFeePerGas&quot;: 30 * 10**9, &quot;maxPriorityFeePerGas&quot;: 10**9, &quot;data&quot;: b&quot;&quot;}
+        signed = acct.sign_transaction(tx)
+        raw = getattr(signed, &quot;raw_transaction&quot;, None) or signed.rawTransaction
+        print(&quot;钱包地址      :&quot;, acct.address)
+        print(&quot;交易哈希      :&quot;, &quot;0x&quot; + keccak(raw).hex())
+        print(&quot;原始交易      :&quot;, &quot;0x&quot; + raw.hex()[:66] + &quot;…&quot;)
+        recovered = Account.recover_transaction(raw)
+        print(&quot;eth-account 验证发送方:&quot;, recovered, &quot;OK&quot; if recovered == acct.address else &quot;不一致！&quot;)
+        if recovered != acct.address:
+            sys.exit(1)
+    except ClientError as err:
+        e = err.response[&quot;Error&quot;]
+        print(f&quot;KMS 拒绝: {e[&#x27;Code&#x27;]} - {e[&#x27;Message&#x27;]}&quot;)
+        sys.exit(2)
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre></details><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/sandbox/kms_sign_tx.py">sandbox/kms_sign_tx.py</a>（132 行）</summary><pre><code>#!/usr/bin/env python3
+&quot;&quot;&quot;用 KMS 里的 secp256k1 密钥签一笔 EIP-1559 交易。私钥不出 KMS。
+
+默认只签名不广播；给了 --rpc 会自动填 nonce/chainId/gas 价格，再加 --send 才广播。
+&quot;&quot;&quot;
+import argparse
+import json
+import os
+import urllib.request
+
+import boto3
+import rlp
+from eth_account import Account
+from eth_keys import keys
+from eth_utils import keccak, to_checksum_address
+
+SECP256K1_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+
+
+def kms_public_key(kms, key_id):
+    der = kms.get_public_key(KeyId=key_id)[&quot;PublicKey&quot;]
+    # SubjectPublicKeyInfo 的最后 65 字节是未压缩点 04||X||Y
+    point = der[-65:]
+    if point[0] != 0x04:
+        raise ValueError(&quot;不是未压缩的 EC 公钥，确认 KeySpec 是 ECC_SECG_P256K1&quot;)
+    return keys.PublicKey(point[1:])
+
+
+def der_to_rs(sig):
+    # ECDSA-Sig-Value ::= SEQUENCE { r INTEGER, s INTEGER }，长度 &lt;= 72，都是短格式
+    if sig[0] != 0x30 or sig[2] != 0x02:
+        raise ValueError(&quot;签名不是 DER SEQUENCE&quot;)
+    r_len = sig[3]
+    r = int.from_bytes(sig[4:4 + r_len], &quot;big&quot;)
+    off = 4 + r_len
+    if sig[off] != 0x02:
+        raise ValueError(&quot;签名里 s 不是 INTEGER&quot;)
+    s_len = sig[off + 1]
+    s = int.from_bytes(sig[off + 2:off + 2 + s_len], &quot;big&quot;)
+    return r, s
+
+
+def kms_sign_digest(kms, key_id, digest, pub):
+    sig = kms.sign(KeyId=key_id, Message=digest, MessageType=&quot;DIGEST&quot;,
+                   SigningAlgorithm=&quot;ECDSA_SHA_256&quot;)[&quot;Signature&quot;]
+    r, s = der_to_rs(sig)
+    # EIP-2：以太坊只接受 low-s，KMS 不保证
+    if s &gt; SECP256K1_N // 2:
+        s = SECP256K1_N - s
+    # KMS 不返回 recovery id，两个都试一下，能恢复出同一个公钥的就是 v
+    for v in (0, 1):
+        if keys.Signature(vrs=(v, r, s)).recover_public_key_from_msg_hash(digest) == pub:
+            return v, r, s
+    raise RuntimeError(&quot;恢复不出 KMS 公钥，签名有问题&quot;)
+
+
+def rpc_call(url, method, params):
+    body = json.dumps({&quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: 1, &quot;method&quot;: method, &quot;params&quot;: params}).encode()
+    # 公共节点（如 publicnode）会对 Python-urllib 的默认 UA 返回 403
+    req = urllib.request.Request(url, body, {&quot;Content-Type&quot;: &quot;application/json&quot;,
+                                             &quot;User-Agent&quot;: &quot;kms-sign-tx/1.0&quot;})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        out = json.load(resp)
+    if &quot;error&quot; in out:
+        raise RuntimeError(f&quot;{method}: {out[&#x27;error&#x27;]}&quot;)
+    return out[&quot;result&quot;]
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument(&quot;--key-id&quot;, default=os.environ.get(&quot;KMS_KEY_ID&quot;, &quot;alias/nitro-sandbox-eth&quot;))
+    # boto3 只认 AWS_DEFAULT_REGION，不认 AWS_REGION，这里两个都接受
+    p.add_argument(&quot;--region&quot;, default=os.environ.get(&quot;AWS_REGION&quot;) or os.environ.get(&quot;AWS_DEFAULT_REGION&quot;))
+    p.add_argument(&quot;--to&quot;, required=True)
+    p.add_argument(&quot;--value-wei&quot;, type=int, default=0)
+    p.add_argument(&quot;--data&quot;, default=&quot;0x&quot;)
+    p.add_argument(&quot;--chain-id&quot;, type=int, default=11155111, help=&quot;默认 Sepolia&quot;)
+    p.add_argument(&quot;--nonce&quot;, type=int, default=0)
+    p.add_argument(&quot;--gas&quot;, type=int, default=21000)
+    p.add_argument(&quot;--max-fee-wei&quot;, type=int, default=30 * 10**9)
+    p.add_argument(&quot;--priority-fee-wei&quot;, type=int, default=1 * 10**9)
+    p.add_argument(&quot;--rpc&quot;, help=&quot;以太坊 JSON-RPC，给了就从链上取 nonce/chainId/gas 价格&quot;)
+    p.add_argument(&quot;--send&quot;, action=&quot;store_true&quot;, help=&quot;签完广播（需要 --rpc）&quot;)
+    a = p.parse_args()
+
+    if not a.region:
+        raise SystemExit(&quot;需要 --region 或者环境变量 AWS_REGION&quot;)
+    kms = boto3.client(&quot;kms&quot;, region_name=a.region)
+    pub = kms_public_key(kms, a.key_id)
+    sender = pub.to_checksum_address()
+    print(&quot;KMS 地址      :&quot;, sender)
+
+    if a.rpc:
+        a.chain_id = int(rpc_call(a.rpc, &quot;eth_chainId&quot;, []), 16)
+        a.nonce = int(rpc_call(a.rpc, &quot;eth_getTransactionCount&quot;, [sender, &quot;pending&quot;]), 16)
+        a.priority_fee_wei = int(rpc_call(a.rpc, &quot;eth_maxPriorityFeePerGas&quot;, []), 16)
+        base = int(rpc_call(a.rpc, &quot;eth_getBlockByNumber&quot;, [&quot;latest&quot;, False])[&quot;baseFeePerGas&quot;], 16)
+        a.max_fee_wei = 2 * base + a.priority_fee_wei
+        # 不能写死 21000：实测 Sepolia 上转给一个从没用过的新地址要 ~20 万 gas，给少了交易会失败（手续费照扣）。
+        # 估算后多留 10%，没用完的会退回
+        est = int(rpc_call(a.rpc, &quot;eth_estimateGas&quot;, [{&quot;from&quot;: sender, &quot;to&quot;: to_checksum_address(a.to),
+                                                       &quot;value&quot;: hex(a.value_wei), &quot;data&quot;: a.data}]), 16)
+        a.gas = est * 11 // 10
+        print(&quot;gas 上限      :&quot;, a.gas, f&quot;（估算 {est}）&quot;)
+
+    to = bytes.fromhex(to_checksum_address(a.to)[2:])
+    data = bytes.fromhex(a.data[2:] if a.data.startswith(&quot;0x&quot;) else a.data)
+    # EIP-1559: 0x02 || rlp([chainId, nonce, maxPriorityFee, maxFee, gas, to, value, data, accessList])
+    fields = [a.chain_id, a.nonce, a.priority_fee_wei, a.max_fee_wei, a.gas, to, a.value_wei, data, []]
+    digest = keccak(b&quot;\x02&quot; + rlp.encode(fields))
+    print(&quot;签名哈希      :&quot;, &quot;0x&quot; + digest.hex())
+
+    v, r, s = kms_sign_digest(kms, a.key_id, digest, pub)
+    raw = b&quot;\x02&quot; + rlp.encode(fields + [v, r, s])
+    raw_hex = &quot;0x&quot; + raw.hex()
+    print(&quot;交易哈希      :&quot;, &quot;0x&quot; + keccak(raw).hex())
+    print(&quot;原始交易      :&quot;, raw_hex)
+
+    # 用 eth-account 独立解码一遍，确认发送方就是 KMS 地址
+    recovered = Account.recover_transaction(raw_hex)
+    print(&quot;eth-account 验证发送方:&quot;, recovered, &quot;OK&quot; if recovered == sender else &quot;不一致！&quot;)
+    if recovered != sender:
+        raise SystemExit(1)
+
+    if a.send:
+        if not a.rpc:
+            raise SystemExit(&quot;--send 需要 --rpc&quot;)
+        print(&quot;已广播        :&quot;, rpc_call(a.rpc, &quot;eth_sendRawTransaction&quot;, [raw_hex]))
+
+
+if __name__ == &quot;__main__&quot;:
+    main()</code></pre></details></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>deps OK 1.44.4 0.14.0
+rootfs 上残留的挂载：0
+NAT OK（enp39s0）</pre></div>
+  </div>
+</li>
+<li class="step" id="s-probe">
+  <div class="step-n" aria-hidden="true">14</div>
+  <div class="step-b">
+    <h3>启动 Sandbox，跑 NSM 探针，记下 PCR0 <span class="where where-p">在 parent 上</span></h3>
+    <p>Sandbox 跟 /dev/nsm 要一份 attestation 文档，打印里面的 PCR，再用它调一次 KMS GenerateRandom(Recipient)。能跑通说明 KMS 接受这台 Sandbox 的 attestation。复制 PCR0 那一行的 96 个字符，下一步要用。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/attest.sh restart normal
+bash parent/attest.sh probe</code></pre></div>
+    
+    <div class="out"><div class="out-h">预期输出</div><pre>$ bash parent/attest.sh restart normal
+Sandbox 已启动（normal）
+$ bash parent/attest.sh probe
+attestation 文档: 4758 字节, module_id=i-0123456789abcdef0-enc0123456789abcdef, digest=SHA384
+  PCR0  22e450ea930cfbcc6933363f99bf5dd788605c6c2e61d1f4731aaed3359929b64144b22866c5367a5a299d016e10fbad
+  PCR1  67d3e9e081dbc966527ce5feb2b6fb2f195838da4223436ab4af0c3aad61edf3f35fad00d7d71ee5805b39ad85f08e29
+  PCR2  21b9efbc184807662e966d34f390821309eeac6802309798826296bf3e8bec7c10edb30948c90ba67310f7b964fc500a
+  PCR3  9f81fb901a162c0df7b1652eb155e6dba797a46a0cfaf0e9c20ae669734f4afa17a23152a203fc1d6911e3b12c6674c4
+  PCR4  b6a321937c4fc1d04ef0823e880c7db5c91d36c36f4de05107ff667474c36453c5314d8030bd2e8d133990b26421c351
+  PCR5  da45a8190e1ae67614682c79a14783e79ad0f3fad47a2017be8fe17c5c1147166dd8edcd0d5a07304fa0dabf55291bd5
+  PCR6  0ca1f41732f0a18892f8591481cce252b2d2817ad3fa8bd2bea89b59c8cbf9064b055f8f19b3bc09840d1763cb00e772
+  全零的 PCR: [7, 8, 9, 10, 11, 12, 13, 14, 15]（debug_mode 下 0/1/2 全零是正常的）
+KMS GenerateRandom(Recipient) OK：在 Sandbox 里解开了 32 字节 → KMS 接受这份 attestation 文档</pre></div>
+  </div>
+</li>
+<li class="step" id="s-key">
+  <div class="step-n" aria-hidden="true">15</div>
+  <div class="step-b">
+    <h3>创建只认这个 PCR0 的 KMS key <span class="where where-w">在 工作机 上</span></h3>
+    <p>key policy 五条：管理员能管理但不能解密；谁都能加密；只有 PCR0 匹配的 Sandbox 能解密和生成钱包；PCR0 不匹配（包括根本没带 attestation）一律拒绝；文档里出现 PCR16（封口）一律拒绝。别名已经存在时只更新 key policy。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash workstation/create-attest-key.sh &lt;上一步的 PCR0&gt;</code></pre></div>
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/workstation/create-attest-key.sh">workstation/create-attest-key.sh</a>（43 行）</summary><pre><code>#!/usr/bin/env bash
+# 【工作机】创建（或更新）只认这个 PCR0 的 KMS key。用法：bash workstation/create-attest-key.sh &lt;PCR0&gt;
+# 别名已经存在时只更新 key policy：换了内核/initrd/cmdline、PCR0 变了的时候也用它。
+set -euo pipefail
+source &quot;$(dirname &quot;$0&quot;)/../config.sh&quot;
+PCR0=${1:-}
+[[ &quot;$PCR0&quot; =~ ^[0-9a-f]{96}$ ]] || { echo &quot;用法：bash workstation/create-attest-key.sh &lt;PCR0（96 个十六进制字符）&gt;&quot;; exit 1; }
+ROLE_ARN=$(aws iam get-role --role-name &quot;$ROLE_NAME&quot; --query Role.Arn --output text)
+ACCT=$(echo &quot;$ROLE_ARN&quot; | cut -d: -f5)
+POLICY=$(mktemp)
+cat &gt; &quot;$POLICY&quot; &lt;&lt;JSON
+{
+  &quot;Version&quot;: &quot;2012-10-17&quot;,
+  &quot;Statement&quot;: [
+    { &quot;Sid&quot;: &quot;KeyAdministration&quot;, &quot;Effect&quot;: &quot;Allow&quot;, &quot;Principal&quot;: { &quot;AWS&quot;: &quot;arn:aws:iam::$ACCT:root&quot; },
+      &quot;NotAction&quot;: [&quot;kms:Decrypt&quot;, &quot;kms:ReEncryptFrom&quot;, &quot;kms:CreateGrant&quot;], &quot;Resource&quot;: &quot;*&quot; },
+    { &quot;Sid&quot;: &quot;EncryptWithoutAttestation&quot;, &quot;Effect&quot;: &quot;Allow&quot;,
+      &quot;Principal&quot;: { &quot;AWS&quot;: [&quot;arn:aws:iam::$ACCT:root&quot;, &quot;$ROLE_ARN&quot;] }, &quot;Action&quot;: &quot;kms:Encrypt&quot;, &quot;Resource&quot;: &quot;*&quot; },
+    { &quot;Sid&quot;: &quot;AttestedSandboxOnly&quot;, &quot;Effect&quot;: &quot;Allow&quot;, &quot;Principal&quot;: { &quot;AWS&quot;: &quot;$ROLE_ARN&quot; },
+      &quot;Action&quot;: [&quot;kms:Decrypt&quot;, &quot;kms:GenerateDataKeyPair&quot;], &quot;Resource&quot;: &quot;*&quot;,
+      &quot;Condition&quot;: { &quot;StringEqualsIgnoreCase&quot;: { &quot;kms:RecipientAttestation:PCR0&quot;: &quot;$PCR0&quot; } } },
+    { &quot;Sid&quot;: &quot;DenyDecryptUnlessPCR0Matches&quot;, &quot;Effect&quot;: &quot;Deny&quot;, &quot;Principal&quot;: &quot;*&quot;,
+      &quot;Action&quot;: [&quot;kms:Decrypt&quot;, &quot;kms:ReEncryptFrom&quot;], &quot;Resource&quot;: &quot;*&quot;,
+      &quot;Condition&quot;: { &quot;StringNotEqualsIgnoreCase&quot;: { &quot;kms:RecipientAttestation:PCR0&quot;: &quot;$PCR0&quot; } } },
+    { &quot;Sid&quot;: &quot;DenyAfterSeal&quot;, &quot;Effect&quot;: &quot;Deny&quot;, &quot;Principal&quot;: &quot;*&quot;,
+      &quot;Action&quot;: [&quot;kms:Decrypt&quot;, &quot;kms:ReEncryptFrom&quot;, &quot;kms:GenerateDataKeyPair&quot;], &quot;Resource&quot;: &quot;*&quot;,
+      &quot;Condition&quot;: { &quot;Null&quot;: { &quot;kms:RecipientAttestation:PCR16&quot;: &quot;false&quot; } } }
+  ]
+}
+JSON
+FINDINGS=$(aws accessanalyzer validate-policy --policy-type RESOURCE_POLICY --policy-document &quot;file://$POLICY&quot; \
+  --query &#x27;findings[].[findingType,issueCode]&#x27; --output text)
+[ -z &quot;$FINDINGS&quot; ] &amp;&amp; echo &quot;Access Analyzer：策略没有问题&quot; || { echo &quot;Access Analyzer 报告：$FINDINGS&quot;; exit 1; }
+if KEY_ID=$(aws kms describe-key --key-id &quot;$ATTEST_KEY_ALIAS&quot; --query KeyMetadata.KeyId --output text 2&gt;/dev/null); then
+  aws kms put-key-policy --key-id &quot;$KEY_ID&quot; --policy-name default --policy &quot;file://$POLICY&quot;   # 这里不能用别名
+  echo &quot;已更新 $ATTEST_KEY_ALIAS 的 key policy（PCR0=${PCR0:0:16}…）&quot;
+else
+  KEY_ID=$(aws kms create-key --description &quot;nitro sandbox workshop: attestation (PCR0)&quot; \
+    --policy &quot;file://$POLICY&quot; --query KeyMetadata.KeyId --output text)
+  aws kms create-alias --alias-name &quot;$ATTEST_KEY_ALIAS&quot; --target-key-id &quot;$KEY_ID&quot;
+  echo &quot;已创建 $ATTEST_KEY_ALIAS（$KEY_ID），只认 PCR0=${PCR0:0:16}…&quot;
+fi
+rm -f &quot;$POLICY&quot;</code></pre></details></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>Access Analyzer：策略没有问题
+已创建 alias/nitro-sandbox-workshop-attest（1234abcd-12ab-34cd-56ef-1234567890ab），只认 PCR0=22e450ea930cfbcc…
+
+# 再执行一次（别名已存在，只更新 key policy）：
+Access Analyzer：策略没有问题
+已更新 alias/nitro-sandbox-workshop-attest 的 key policy（PCR0=22e450ea930cfbcc…）</pre></div>
+  </div>
+</li>
+<li class="step" id="s-dec">
+  <div class="step-n" aria-hidden="true">16</div>
+  <div class="step-b">
+    <h3>加密，再带 attestation 解密 <span class="where where-p">在 parent 上</span></h3>
+    <p>加密不需要 attestation；解密时 Sandbox 把 attestation 文档（带一把临时 RSA 公钥）交给 KMS，KMS 核对 PCR0 后只把明文加密给那把公钥，所以明文只在 Sandbox 里出现。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/attest.sh encrypt &quot;hello nitro sandbox&quot;
+bash parent/attest.sh decrypt</code></pre></div>
+    
+    <div class="out"><div class="out-h">预期输出</div><pre>$ bash parent/attest.sh encrypt &quot;hello nitro sandbox&quot;
+已加密 → secret.b64（KeyId: arn:aws:kms:us-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab）
+$ bash parent/attest.sh decrypt
+本次 attestation 的 PCR0 : 22e450ea930cfbcc6933363f99bf5dd788605c6c2e61d1f4731aaed3359929b64144b22866c5367a5a299d016e10fbad
+本次 attestation 的 PCR16: 不在文档里（未封口）
+KeyId   : arn:aws:kms:us-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab
+解密结果: hello nitro sandbox</pre></div>
+  </div>
+</li>
+<li class="step" id="s-neg">
+  <div class="step-n" aria-hidden="true">17</div>
+  <div class="step-b">
+    <h3>负面测试：不带 attestation、parent 直接解密 <span class="where where-p">在 parent 上</span></h3>
+    <p>同一个实例角色、同一段密文：Sandbox 里不带 attestation 解密，以及 parent 自己调 KMS 解密，都必须被拒（explicit deny）。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/attest.sh decrypt-noattest
+bash parent/attest.sh parent-decrypt</code></pre></div>
+    
+    <div class="out"><div class="out-h">预期输出</div><pre>$ bash parent/attest.sh decrypt-noattest
+KMS 拒绝: AccessDeniedException - User: arn:aws:sts::111122223333:assumed-role/nitro-sandbox-workshop/i-0123456789abcdef0 is not authorized to perform: kms:Decrypt on resource: arn:aws:kms:us-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab with an explicit deny in a resource-based policy
+$ bash parent/attest.sh parent-decrypt
+aws: [ERROR]: An error occurred (AccessDeniedException) when calling the Decrypt operation: User: arn:aws:sts::111122223333:assumed-role/nitro-sandbox-workshop/i-0123456789abcdef0 is not authorized to perform: kms:Decrypt on resource: arn:aws:kms:us-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab with an explicit deny in a resource-based policy</pre></div>
+  </div>
+</li>
+<li class="step" id="s-wallet">
+  <div class="step-n" aria-hidden="true">18</div>
+  <div class="step-b">
+    <h3>attestation 保护的 ETH 钱包：创建并签名 <span class="where where-p">在 parent 上</span></h3>
+    <p>KMS GenerateDataKeyPair(ECC_SECG_P256K1) 只把私钥加密给 attestation 里的公钥；之后每次签名先带 attestation 解密，在 Sandbox 内存里签 EIP-1559 交易，再用 eth-account 独立验证发送方。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/attest.sh wallet-create
+bash parent/attest.sh wallet-sign</code></pre></div>
+    
+    <div class="out"><div class="out-h">预期输出</div><pre>$ bash parent/attest.sh wallet-create
+本次 attestation 的 PCR0: 22e450ea930cfbcc… 
+钱包地址      : 0x6B43959455acf40c93561D5fb51876b31e671933
+已保存 wallet.json：只有地址、公钥和加密的私钥，明文私钥没有写盘
+$ bash parent/attest.sh wallet-sign
+本次 attestation 的 PCR0: 22e450ea930cfbcc… 
+钱包地址      : 0x6B43959455acf40c93561D5fb51876b31e671933
+交易哈希      : 0xcaddd9c9a603fb1898103ab4a729c7f75904904d3dc9f2ef8885272817e8c315
+原始交易      : 0x02f87583aa36a780843b9aca008506fc23ac008252089400000000000000000000…
+eth-account 验证发送方: 0x6B43959455acf40c93561D5fb51876b31e671933 OK</pre></div>
+  </div>
+</li>
+<li class="step" id="s-walletneg">
+  <div class="step-n" aria-hidden="true">19</div>
+  <div class="step-b">
+    <h3>钱包的负面测试：不带 attestation、parent 直接解密私钥 <span class="where where-p">在 parent 上</span></h3>
+    <p>wallet.json 里的加密私钥谁都能拿到（parent 能读 Sandbox 的盘），但没有匹配的 attestation 就解不开。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/attest.sh wallet-noattest
+bash parent/attest.sh parent-wallet-decrypt</code></pre></div>
+    
+    <div class="out"><div class="out-h">预期输出</div><pre>$ bash parent/attest.sh wallet-noattest
+KMS 拒绝: AccessDeniedException - User: arn:aws:sts::111122223333:assumed-role/nitro-sandbox-workshop/i-0123456789abcdef0 is not authorized to perform: kms:Decrypt on resource: arn:aws:kms:us-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab with an explicit deny in a resource-based policy
+$ bash parent/attest.sh parent-wallet-decrypt
+aws: [ERROR]: An error occurred (AccessDeniedException) when calling the Decrypt operation: User: arn:aws:sts::111122223333:assumed-role/nitro-sandbox-workshop/i-0123456789abcdef0 is not authorized to perform: kms:Decrypt on resource: arn:aws:kms:us-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab with an explicit deny in a resource-based policy</pre></div>
+  </div>
+</li>
+<li class="step" id="s-sign">
+  <div class="step-n" aria-hidden="true">20</div>
+  <div class="step-b">
+    <h3>KMS Sign 签 ETH 交易（私钥不出 KMS） <span class="where where-p">在 parent 上</span></h3>
+    <p>另一种做法：私钥一直在 KMS 里，Sandbox 只把交易哈希交给 KMS Sign，再自己拼出 EIP-1559 签名。第一行是 KMS 地址，第 26 步要往这个地址打测试币。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/attest.sh eth-sign</code></pre></div>
+    
+    <div class="out"><div class="out-h">预期输出</div><pre>$ bash parent/attest.sh eth-sign
+KMS 地址      : 0xcE938fDD4ab92d443e77999a436F1C934782574c
+签名哈希      : 0x985e3c0620de3fbaf7c3254d7ab8b6b6eea58c3a65bc4fb25c2f039b1c41a9bd
+交易哈希      : 0x9400ca32619d8c0fc979b4988cb8f05112ff39b5dccde9b10b635903c2dd054d
+原始交易      : 0x02f87583aa36a780843b9aca008506fc23ac0082520894000000000000000000000000000000000000dead87038d7ea4c6800080c001a0fdf0382fad7760581d155bd284e5bd8d9218f69340b9194c78900af87beeb4fda04cb999701322731ac269d0368c08c5e1fb4c27f524f6f8d46589709fdd6a25e3
+eth-account 验证发送方: 0xcE938fDD4ab92d443e77999a436F1C934782574c OK</pre></div>
+  </div>
+</li>
+<li class="step" id="s-signneg">
+  <div class="step-n" aria-hidden="true">21</div>
+  <div class="step-b">
+    <h3>对照：parent 用同一个角色也能让 KMS 签 <span class="where where-p">在 parent 上</span></h3>
+    <p>kms:Sign 不支持 attestation（Recipient），key policy 只能按 IAM 身份放行，而 parent 和 Sandbox 用的是同一个实例角色。这一步预期是成功的：KMS Sign 方案的边界是 IAM 角色，不是 Sandbox。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/attest.sh parent-eth-sign</code></pre></div>
+    
+    <div class="out"><div class="out-h">预期输出</div><pre>$ bash parent/attest.sh parent-eth-sign
+arn:aws:kms:us-west-1:111122223333:key/abcd1234-ab12-cd34-ef56-abcdef123456	ECDSA_SHA_256</pre></div>
+  </div>
+</li>
+<li class="step" id="s-seal">
+  <div class="step-n" aria-hidden="true">22</div>
+  <div class="step-b">
+    <h3>封口：扩展并锁定 PCR16，之后 KMS 什么都不给 <span class="where where-p">在 parent 上</span></h3>
+    <p>attestation 文档只包含已锁定的 PCR，所以锁定 PCR16 之后文档里多了 PCR16，命中 key policy 的 DenyAfterSeal。正式用法是服务启动时取一次密钥、马上封口。重启才会清零。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/attest.sh seal
+bash parent/attest.sh decrypt
+bash parent/attest.sh wallet-sign</code></pre></div>
+    
+    <div class="out"><div class="out-h">预期输出</div><pre>$ bash parent/attest.sh seal
+PCR16 封口前: 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+PCR16 封口后: 842cd3069f075282776410acd0cc120134b157c2e3bd912b3b899053850d6f7dd69f9760d5b78f11ca65dbbc741066ab （已锁定，不能再改）
+从现在起到重启前，这个 Sandbox 的 attestation 都不再满足 key policy
+$ bash parent/attest.sh decrypt
+本次 attestation 的 PCR0 : 22e450ea930cfbcc6933363f99bf5dd788605c6c2e61d1f4731aaed3359929b64144b22866c5367a5a299d016e10fbad
+本次 attestation 的 PCR16: 842cd3069f075282776410acd0cc120134b157c2e3bd912b3b899053850d6f7dd69f9760d5b78f11ca65dbbc741066ab（已封口）
+KMS 拒绝: AccessDeniedException - User: arn:aws:sts::111122223333:assumed-role/nitro-sandbox-workshop/i-0123456789abcdef0 is not authorized to perform: kms:Decrypt on resource: arn:aws:kms:us-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab with an explicit deny in a resource-based policy
+$ bash parent/attest.sh wallet-sign
+本次 attestation 的 PCR0: 22e450ea930cfbcc… （文档里有 PCR16 = 已封口）
+KMS 拒绝: AccessDeniedException - User: arn:aws:sts::111122223333:assumed-role/nitro-sandbox-workshop/i-0123456789abcdef0 is not authorized to perform: kms:Decrypt on resource: arn:aws:kms:us-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab with an explicit deny in a resource-based policy</pre></div>
+  </div>
+</li>
+<li class="step" id="s-changed">
+  <div class="step-n" aria-hidden="true">23</div>
+  <div class="step-b">
+    <h3>改镜像：cmdline 多一个 quiet，PCR0 就变了 <span class="where where-p">在 parent 上</span></h3>
+    <p>内核、initrd、cmdline 任何一点改动都会改变 PCR0。用改过的配置重启，同样的密文和钱包都解不开了。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/attest.sh restart changed
+bash parent/attest.sh probe | grep PCR0
+bash parent/attest.sh decrypt
+bash parent/attest.sh wallet-sign</code></pre></div>
+    
+    <div class="out"><div class="out-h">预期输出</div><pre>$ bash parent/attest.sh restart changed
+Sandbox 已启动（changed）
+$ bash parent/attest.sh probe | grep PCR0
+  PCR0  fe27a4a9a1de1218d26a093363c3a71c25f072e0dd163bfafaf9799771286fee1494202f90b74c6552dba29a8bb37f0b
+$ bash parent/attest.sh decrypt
+本次 attestation 的 PCR0 : fe27a4a9a1de1218d26a093363c3a71c25f072e0dd163bfafaf9799771286fee1494202f90b74c6552dba29a8bb37f0b
+本次 attestation 的 PCR16: 不在文档里（未封口）
+KMS 拒绝: AccessDeniedException - User: arn:aws:sts::111122223333:assumed-role/nitro-sandbox-workshop/i-0123456789abcdef0 is not authorized to perform: kms:Decrypt on resource: arn:aws:kms:us-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab with an explicit deny in a resource-based policy
+$ bash parent/attest.sh wallet-sign
+本次 attestation 的 PCR0: fe27a4a9a1de1218… 
+KMS 拒绝: AccessDeniedException - User: arn:aws:sts::111122223333:assumed-role/nitro-sandbox-workshop/i-0123456789abcdef0 is not authorized to perform: kms:Decrypt on resource: arn:aws:kms:us-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab with an explicit deny in a resource-based policy</pre></div>
+  </div>
+</li>
+<li class="step" id="s-debug">
+  <div class="step-n" aria-hidden="true">24</div>
+  <div class="step-b">
+    <h3>debug 模式：PCR0/1/2 全是零 <span class="where where-p">在 parent 上</span></h3>
+    <p>debug 模式下 parent 能看控制台，所以 Nitro 把 PCR0～2 清零，KMS 自然不认。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/attest.sh restart debug
+bash parent/attest.sh probe
+bash parent/attest.sh decrypt</code></pre></div>
+    
+    <div class="out"><div class="out-h">预期输出</div><pre>$ bash parent/attest.sh restart debug
+Sandbox 已启动（debug）
+$ bash parent/attest.sh probe
+attestation 文档: 4756 字节, module_id=i-0123456789abcdef0-enc0123456789abcdef, digest=SHA384
+  PCR3  9f81fb901a162c0df7b1652eb155e6dba797a46a0cfaf0e9c20ae669734f4afa17a23152a203fc1d6911e3b12c6674c4
+  PCR4  b6a321937c4fc1d04ef0823e880c7db5c91d36c36f4de05107ff667474c36453c5314d8030bd2e8d133990b26421c351
+  全零的 PCR: [0, 1, 2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]（debug_mode 下 0/1/2 全零是正常的）
+KMS GenerateRandom(Recipient) OK：在 Sandbox 里解开了 32 字节 → KMS 接受这份 attestation 文档
+$ bash parent/attest.sh decrypt
+本次 attestation 的 PCR0 : 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+本次 attestation 的 PCR16: 不在文档里（未封口）
+KMS 拒绝: AccessDeniedException - User: arn:aws:sts::111122223333:assumed-role/nitro-sandbox-workshop/i-0123456789abcdef0 is not authorized to perform: kms:Decrypt on resource: arn:aws:kms:us-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab with an explicit deny in a resource-based policy</pre></div>
+  </div>
+</li>
+<li class="step" id="s-restore">
+  <div class="step-n" aria-hidden="true">25</div>
+  <div class="step-b">
+    <h3>恢复原配置重启：PCR0 和第一次一样，又能解开了 <span class="where where-p">在 parent 上</span></h3>
+    <p>同样的内核、initrd、cmdline，PCR0 每次启动都一样；封口也在重启后清零。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/attest.sh restart normal
+bash parent/attest.sh decrypt
+bash parent/attest.sh wallet-sign</code></pre></div>
+    
+    <div class="out"><div class="out-h">预期输出</div><pre>$ bash parent/attest.sh restart normal
+Sandbox 已启动（normal）
+$ bash parent/attest.sh decrypt
+本次 attestation 的 PCR0 : 22e450ea930cfbcc6933363f99bf5dd788605c6c2e61d1f4731aaed3359929b64144b22866c5367a5a299d016e10fbad
+本次 attestation 的 PCR16: 不在文档里（未封口）
+KeyId   : arn:aws:kms:us-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab
+解密结果: hello nitro sandbox
+$ bash parent/attest.sh wallet-sign
+本次 attestation 的 PCR0: 22e450ea930cfbcc… 
+钱包地址      : 0x6B43959455acf40c93561D5fb51876b31e671933
+交易哈希      : 0xcaddd9c9a603fb1898103ab4a729c7f75904904d3dc9f2ef8885272817e8c315
+原始交易      : 0x02f87583aa36a780843b9aca008506fc23ac008252089400000000000000000000…
+eth-account 验证发送方: 0x6B43959455acf40c93561D5fb51876b31e671933 OK</pre></div>
+  </div>
+</li>
+<li class="step" id="s-send">
+  <div class="step-n" aria-hidden="true">26</div>
+  <div class="step-b">
+    <h3>（可选）在 Sepolia 上真的转一笔 <span class="where where-p">在 parent 上</span></h3>
+    <p>先去 Sepolia 水龙头给第 20 步打印的 KMS 地址打一点测试币（0.005 ETH 就够）。--rpc 会从链上取 nonce、chainId、gas 价格，并用 eth_estimateGas 估算 gas（转给新地址要 ~20 万 gas，写死 21000 会失败）。等十几秒再查回执。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/attest.sh eth-send
+bash parent/attest.sh eth-receipt &lt;上面打印的交易哈希&gt;</code></pre></div>
+    
+    <div class="out"><div class="out-h">预期输出</div><pre>$ bash parent/attest.sh eth-send
+KMS 地址      : 0xcE938fDD4ab92d443e77999a436F1C934782574c
+gas 上限      : 23100 （估算 21000）
+签名哈希      : 0xdfc676c125912f9a1cfb2e328f6d8cc5a22e82f6175d06781ec67adb1805c00b
+交易哈希      : 0x0de54468a5cb15ff6908c03213251406d9668fc7314512feca8d876afb1e04c5
+原始交易      : 0x02f86c83aa36a780021e825a3c94000000000000000000000000000000000000dead87038d7ea4c6800080c001a03e40a4017b76cd0a9060a59ec9fe5eb3d925c9745a72d6a82166ad8fb30420eda070a8a30c857dc825005cf3fa6bdaae2069d338b4bdb26853073d212ba7609564
+eth-account 验证发送方: 0xcE938fDD4ab92d443e77999a436F1C934782574c OK
+已广播        : 0x0de54468a5cb15ff6908c03213251406d9668fc7314512feca8d876afb1e04c5
+$ bash parent/attest.sh eth-receipt 0x0de54468a5cb15ff6908c03213251406d9668fc7314512feca8d876afb1e04c5
+区块 12151821  status 0x1（0x1 = 成功）  from 0xce938fdd4ab92d443e77999a436f1c934782574c</pre></div>
+  </div>
+</li>
+<li class="step" id="s-trail">
+  <div class="step-n" aria-hidden="true">27</div>
+  <div class="step-b">
+    <h3>在 CloudTrail 里看是谁签的 <span class="where where-w">在 工作机 上</span></h3>
+    <p>Sandbox 的签名和 parent 的签名，在 KMS 看来身份一样（同一个实例角色）、来源 IP 也一样（都从 parent 出去）。事件要 5～15 分钟才出现；下面同一秒的两行就是第 20、21 步。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash workstation/cloudtrail.sh</code></pre></div>
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/workstation/cloudtrail.sh">workstation/cloudtrail.sh</a>（13 行）</summary><pre><code>#!/usr/bin/env bash
+# 【工作机】CloudTrail：最近这个 workshop 角色调的 kms:Sign 是谁发起的（事件通常要 5～15 分钟才出现）
+set -euo pipefail
+source &quot;$(dirname &quot;$0&quot;)/../config.sh&quot;
+aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,AttributeValue=Sign \
+  --max-results 30 --query &#x27;Events[].CloudTrailEvent&#x27; --output text | tr &#x27;\t&#x27; &#x27;\n&#x27; | ROLE=&quot;$ROLE_NAME&quot; python3 -c &#x27;
+import sys, json, os
+for line in sys.stdin:
+    if line.strip():
+        e = json.loads(line)
+        who = e[&quot;userIdentity&quot;][&quot;arn&quot;].split(&quot;/&quot;, 1)[1]
+        if who.startswith(os.environ[&quot;ROLE&quot;] + &quot;/&quot;):
+            print(e[&quot;eventTime&quot;], e[&quot;sourceIPAddress&quot;], who, e.get(&quot;errorCode&quot;, &quot;成功&quot;))&#x27;</code></pre></details></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>2026-11-17T03:39:35Z 203.0.113.25 nitro-sandbox-workshop/i-0123456789abcdef0 成功
+2026-11-17T03:39:35Z 203.0.113.25 nitro-sandbox-workshop/i-0123456789abcdef0 成功</pre></div>
+  </div>
+</li>
+      </ol>
+    </section>
+
+    <section id="b-results">
+      <h2>B 的结果：PCR0 一变，KMS 就什么都不给</h2>
+      <p>谁能拿到什么，见页首的表。下面是 PCR0 的实测值和 ETH 那部分的记录。</p>
+      <h3 class="sub">PCR0 实测</h3>
+      <div class="tablewrap"><table><thead><tr><th>启动方式</th><th>PCR0</th><th>和 key policy 比</th></tr></thead><tbody>
+<tr><td><a href="#s-probe">第一次启动（原配置）</a></td><td><code>22e450ea930cfbcc…6e10fbad</code></td><td>和 key policy 里的一致</td></tr><tr><td><a href="#s-changed">cmdline 多一个 quiet</a></td><td><code>fe27a4a9a1de1218…8bb37f0b</code></td><td>不一致 → 被拒</td></tr><tr><td><a href="#s-debug">debug 模式</a></td><td><code>0000000000000000…00000000</code></td><td>不一致 → 被拒</td></tr><tr><td><a href="#s-restore">恢复原配置重启</a></td><td><code>22e450ea930cfbcc…6e10fbad</code></td><td>和 key policy 里的一致</td></tr>
+      </tbody></table></div>
+      <h3 class="sub">ETH</h3>
+<dl class="env">
+  <dt>KMS Sign 地址</dt><dd><code>0xcE938fDD4ab92d443e77999a436F1C934782574c</code>（alias/nitro-sandbox-workshop-eth）</dd>
+  <dt>真转的一笔</dt><dd><a href="https://sepolia.etherscan.io/tx/0x0de54468a5cb15ff6908c03213251406d9668fc7314512feca8d876afb1e04c5">0x0de54468a5cb15ff…</a>，Sepolia 区块 12151821，status 0x1</dd>
+  <dt>attestation 钱包</dt><dd><code>0x6B43959455acf40c93561D5fb51876b31e671933</code>（私钥只在 Sandbox 内存里出现过）</dd>
+</dl>
+<div class="tablewrap"><table><thead><tr><th>时间</th><th>来源 IP</th><th>身份</th><th>结果</th></tr></thead><tbody><tr><td>2026-11-17 03:39:35 UTC</td><td>203.0.113.25</td><td>nitro-sandbox-workshop/i-0123456789abcdef0</td><td>成功</td></tr><tr><td>2026-11-17 03:39:35 UTC</td><td>203.0.113.25</td><td>nitro-sandbox-workshop/i-0123456789abcdef0</td><td>成功</td></tr></tbody></table></div>
+<p class="note">CloudTrail 里同一秒的两次 kms:Sign：一次来自 Sandbox（第 20 步），一次来自 parent（第 21 步）。身份和来源 IP 完全一样，KMS 分不出来。地址、交易哈希每个人都不一样。</p>
+      <h3 class="sub">怎么看</h3>
+      <ul class="prose">
+        <li><strong>attestation 管的是"启动时是什么镜像"。</strong>内核、initrd、cmdline 有一点不同 PCR0 就变；同样的镜像每次启动 PCR0 都一样，所以可以把它写进 key policy。</li>
+        <li><strong>rootfs 不在度量范围内。</strong>这个测试镜像的 rootfs 里还有 sshd 和 Python，进到 Sandbox 里的人照样能调 KMS。正式使用要把服务放进 initrd（或者用 dm-verity，把 root hash 写进 cmdline），去掉 SSH，并在启动取完密钥后马上封口。</li>
+        <li><strong>两种 ETH 方案的边界不同。</strong>KMS Sign：私钥永远不出 KMS，但谁有实例角色谁就能签（parent 也能）。attestation 钱包：只有 PCR0 匹配、没封口的 Sandbox 能拿到私钥，parent 拿不到；代价是私钥会出现在 Sandbox 内存里。</li>
+        <li><strong>KMS 分不出 Sandbox 和 parent。</strong>两者用同一个实例角色，出口 IP 也一样（都经过 parent 的 NAT）；能区分它们的只有 attestation 文档。</li>
+      </ul>
+    </section>
+
+    <section id="clean">
+      <h2>清理</h2>
+      <ol class="steps">
+<li class="step" id="s-clean">
+  <div class="step-n" aria-hidden="true">28</div>
+  <div class="step-b">
+    <h3>清理 <span class="where where-w">在 工作机 上</span></h3>
+    <p>删掉 parent 实例（instance store 上的数据一起消失），attestation key 7 天后删除（期间可以 aws kms cancel-key-deletion 撤销）。加 --all 会连 ETH key 和实例角色一起删。</p>
+    <div class="code"><button class="copy" type="button">复制</button><pre><code>bash workstation/cleanup.sh --all</code></pre></div>
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/workstation/cleanup.sh">workstation/cleanup.sh</a>（28 行）</summary><pre><code>#!/usr/bin/env bash
+# 【工作机】清理：删 parent 实例，attestation key 7 天后删除。
+#   bash workstation/cleanup.sh          只删实例和 attestation key
+#   bash workstation/cleanup.sh --all    连 ETH key 和实例角色也删
+set -uo pipefail
+REPO=$(cd &quot;$(dirname &quot;$0&quot;)/..&quot; &amp;&amp; pwd)
+source &quot;$REPO/config.sh&quot;
+[ -f &quot;$REPO/.parent&quot; ] &amp;&amp; source &quot;$REPO/.parent&quot;
+if [ -n &quot;${IID:-}&quot; ]; then
+  aws ec2 terminate-instances --instance-ids &quot;$IID&quot; --query &#x27;TerminatingInstances[0].CurrentState.Name&#x27; --output text
+fi
+del_key() {   # 删除要用 KeyId，别名不行；7 天内可以 aws kms cancel-key-deletion 撤销
+  local id; id=$(aws kms describe-key --key-id &quot;$1&quot; --query KeyMetadata.KeyId --output text 2&gt;/dev/null) || { echo &quot;$1 不存在&quot;; return; }
+  aws kms delete-alias --alias-name &quot;$1&quot;
+  aws kms schedule-key-deletion --key-id &quot;$id&quot; --pending-window-in-days 7 --query DeletionDate --output text
+}
+del_key &quot;$ATTEST_KEY_ALIAS&quot;
+if [ &quot;${1:-}&quot; = &quot;--all&quot; ]; then
+  del_key &quot;$ETH_KEY_ALIAS&quot;
+  aws iam remove-role-from-instance-profile --instance-profile-name &quot;$ROLE_NAME&quot; --role-name &quot;$ROLE_NAME&quot; 2&gt;/dev/null
+  aws iam delete-instance-profile --instance-profile-name &quot;$ROLE_NAME&quot; 2&gt;/dev/null
+  for p in $(aws iam list-role-policies --role-name &quot;$ROLE_NAME&quot; --query &#x27;PolicyNames&#x27; --output text 2&gt;/dev/null); do
+    aws iam delete-role-policy --role-name &quot;$ROLE_NAME&quot; --policy-name &quot;$p&quot;
+  done
+  aws iam delete-role --role-name &quot;$ROLE_NAME&quot; 2&gt;/dev/null &amp;&amp; echo &quot;角色 $ROLE_NAME 已删除&quot;
+fi
+rm -f &quot;$REPO/.parent&quot;
+echo &quot;清理完成&quot;</code></pre></details></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>（清理后补上）</pre></div>
+  </div>
+</li>
+      </ol>
+    </section>
+
+    <section id="pitfalls">
+      <h2>常见问题</h2>
+      <p>都是这次实测时真遇到的。</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>现象</th><th>原因</th><th>怎么办</th></tr></thead>
+          <tbody>
+<tr><td>Firecracker 报 <code>No space left on device (os error 28)</code></td><td>没预留内存池</td><td>做第 5 步（会重启）</td></tr>
+<tr><td>Sandbox 里 4K 随机读只有 1～4 万 IOPS</td><td>数据盘没写 io_engine，默认是 Sync，一次只处理一个请求</td><td>用 parent/start-sandbox.sh 生成的配置（<code>"io_engine": "Async"</code>）</td></tr>
+<tr><td>Sandbox 里看到的 vdb 只有 30G</td><td>NVMe 编号重启后变了，拿到的是 EBS 根盘</td><td>用 <code>/dev/disk/by-id/…Instance_Storage_…</code>（第 6 步）</td></tr>
+<tr><td>读的数字比预期高很多</td><td>读到了没写过的区域（SSD 不读闪存直接返回），或者 parent 的 page cache 太大</td><td>bench.sh 第一项就是写满测试区；内存池按 config.sh 留 48G，每项前清 cache</td></tr>
+<tr><td>Sandbox 里写完 fsync 很快，但数据其实没落盘</td><td>cache_type 默认 Unsafe，会忽略 guest 的 flush</td><td><code>"cache_type": "Writeback"</code>（start-sandbox.sh 已经写了）</td></tr>
+<tr><td>ssh 连不上 172.16.0.2</td><td>tap0 没配，或者 Sandbox 还在启动</td><td>start-sandbox.sh 会等 2 分钟；看 <code>~/bench/fc.log</code></td></tr>
+<tr><td>带 attestation 的正常解密也被拒</td><td>key policy 里的 PCR0 和这次启动的不一样（换了内核、initrd 或 cmdline，或者 AMI 升级了内核）</td><td>重新跑探针，用新的 PCR0 再执行一次 create-attest-key.sh（会更新 policy）</td></tr>
+<tr><td>Sandbox 里拿不到凭证，IMDS 超时</td><td>实例的 IMDS hop limit 是 1；Sandbox 经过 NAT 要两跳</td><td>launch-parent.sh 已经设了 <code>HttpPutResponseHopLimit=2</code></td></tr>
+<tr><td>Sepolia 上的交易 status 是 0x0</td><td>gas 给少了：转给从没用过的地址要 ~20 万 gas</td><td>kms_sign_tx.py 带 --rpc 时会用 eth_estimateGas（已修好）</td></tr>
+<tr><td>封口之后还能解开</td><td>只扩展了 PCR16 没锁定（文档里只有已锁定的 PCR），或者 key policy 里没有 DenyAfterSeal</td><td>用 attest.sh seal（先扩展再锁定）和 create-attest-key.sh 的完整策略</td></tr>
+<tr><td>AWS CLI 输出停在一个分页界面</td><td>AWS CLI v2 默认用 less 分页</td><td>config.sh 里已经设了 <code>AWS_PAGER=""</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      由 <code>tools/build_docs.py</code> 生成：步骤执行的就是仓库里的脚本，预期输出来自 <code>docs/expected/</code>（实测日志脱敏，账号、实例、key、IP 都换成了示例值），图表数字来自 <code>docs/data/results.json</code>。
+    </footer>
+  </main>
+</div>
+
+<div class="tip" id="tip" role="status" aria-live="polite"></div>
+
+<script>
+const DATA = {"tests": [{"id": "6-bigfile-64g", "title": "大文件写入", "desc": "ext4 上写一个 64 GiB 文件，1 MiB 块，QD32，含最后的 fsync", "unit": "MB/s", "local": 1705, "sandbox": 421, "prevLocal": 1707, "prevSandbox": 421}, {"id": "1-seqwrite-64g", "title": "大块顺序写", "desc": "裸设备写 64 GiB，1 MiB 块，QD32，含 fsync", "unit": "MB/s", "local": 1738, "sandbox": 419, "prevLocal": 1714, "prevSandbox": 420}, {"id": "5-seqread-1m", "title": "顺序读", "desc": "1 MiB 块，QD32，30 秒", "unit": "MB/s", "local": 2134, "sandbox": 2139, "prevLocal": 2134, "prevSandbox": 2142}, {"id": "2-randread-4k", "title": "4K 随机读", "desc": "QD32 × 4 线程，30 秒", "unit": "IOPS", "local": 300465, "sandbox": 265267, "prevLocal": 300470, "prevSandbox": 279866}, {"id": "4-randwrite-4k", "title": "4K 随机写", "desc": "QD32 × 4 线程，30 秒，含最后的 fsync", "unit": "IOPS", "local": 165119, "sandbox": 162969, "prevLocal": 165120, "prevSandbox": 185807}, {"id": "3-randread-4k-qd1", "title": "4K 随机读延迟", "desc": "QD1，单线程，30 秒；条长是平均值", "unit": "µs", "local": [73, 83], "sandbox": [98, 212], "prevLocal": [73, 83], "prevSandbox": [97, 230]}], "sync": {"randread": 12927, "seqread": 622}};
+const SVGNS = "http://www.w3.org/2000/svg";
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const el = (tag, attrs = {}, parent) => {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (parent) parent.appendChild(n);
+  return n;
+};
+const fmt = (v) => Math.round(v).toLocaleString("en-US");
+
+/* ---------- 主题 ---------- */
+const themeBtn = document.getElementById("theme");
+const isDark = () => document.documentElement.dataset.theme
+  ? document.documentElement.dataset.theme === "dark"
+  : matchMedia("(prefers-color-scheme: dark)").matches;
+const syncThemeLabel = () => { themeBtn.textContent = isDark() ? "切换浅色" : "切换深色"; };
+themeBtn.addEventListener("click", () => {
+  document.documentElement.dataset.theme = isDark() ? "light" : "dark";
+  syncThemeLabel(); renderAll();
+});
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { syncThemeLabel(); renderAll(); });
+syncThemeLabel();
+
+/* ---------- I/O 路径图 ---------- */
+function renderPath() {
+  const g = document.getElementById("pathArt");
+  g.replaceChildren();
+  const ink = css("--ink"), ink2 = css("--ink-2"), muted = css("--muted"), rule = css("--rule"), surf = css("--surface");
+  const box = (x, y, w, h, t1, t2) => {
+    el("rect", { x, y, width: w, height: h, rx: 8, fill: surf, stroke: rule, "stroke-width": 1.2 }, g);
+    const a = el("text", { x: x + w / 2, y: y + (t2 ? h / 2 - 3 : h / 2 + 5), "text-anchor": "middle", fill: ink, "font-size": 14.5, "font-weight": 600 }, g);
+    a.textContent = t1;
+    if (t2) { const b = el("text", { x: x + w / 2, y: y + h / 2 + 16, "text-anchor": "middle", fill: muted, "font-size": 12.5 }, g); b.textContent = t2; }
+  };
+  const line = (x1, y1, x2, y2, color) => el("line", { x1, y1, x2, y2, stroke: color, "stroke-width": 2, "stroke-linecap": "round" }, g);
+  const label = (x, y, text, color) => {
+    el("rect", { x, y: y - 11, width: 4, height: 22, rx: 2, fill: color }, g);
+    const t = el("text", { x: x + 12, y: y + 5, fill: ink, "font-size": 15, "font-weight": 650 }, g); t.textContent = text;
+  };
+  const note = (x, y, text, anchor = "start") => { const t = el("text", { x, y, fill: ink2, "font-size": 13, "text-anchor": anchor }, g); t.textContent = text; };
+  const L = css("--local"), S = css("--sandbox");
+  // 车道 1：parent 直测
+  label(8, 62, "parent 直测", L);
+  box(150, 34, 150, 56, "fio", "跑在 parent 上");
+  line(300, 62, 828, 62, L);
+  note(560, 52, "O_DIRECT，直达设备", "middle");
+  // 车道 2：Sandbox
+  label(8, 212, "Sandbox", S);
+  // Sandbox 边界
+  el("rect", { x: 140, y: 168, width: 330, height: 92, rx: 12, fill: "none", stroke: muted, "stroke-width": 1, "stroke-dasharray": "0" , opacity: .55 }, g);
+  note(150, 160, "Sandbox 内部（Nitro 隔离，parent 读不到内存）");
+  box(150, 184, 140, 56, "fio", "/dev/vdb");
+  box(318, 184, 140, 56, "virtio-blk", "Sandbox 内核");
+  box(486, 184, 120, 56, "DMB", "共享缓冲区");
+  box(622, 184, 150, 56, "Firecracker", "parent 用户态进程");
+  line(290, 212, 318, 212, S); line(458, 212, 486, 212, S); line(606, 212, 622, 212, S);
+  box(622, 112, 150, 44, "parent page cache", "");
+  line(697, 184, 697, 156, S);
+  line(772, 134, 828, 134, S);
+  note(532, 282, "每次读写多 ~25 µs", "middle");
+  note(697, 104, "没有 O_DIRECT：写在这里被限速", "middle");
+  // 共用的盘
+  box(828, 34, 160, 222, "NVMe", "instance store");
+  const t = el("text", { x: 908, y: 176, "text-anchor": "middle", fill: muted, "font-size": 12.5 }, g); t.textContent = "同一块 1875 GB 盘";
+}
+
+/* ---------- 条形图 ---------- */
+const tip = document.getElementById("tip");
+function showTip(evt, lines) {
+  tip.replaceChildren();
+  const s = document.createElement("strong"); s.textContent = lines.value; tip.appendChild(s);
+  const r = document.createElement("div");
+  const k = document.createElement("span"); k.className = "k"; k.style.background = lines.color; r.appendChild(k);
+  r.appendChild(document.createTextNode(lines.name)); tip.appendChild(r);
+  if (lines.extra) { const e = document.createElement("div"); e.style.color = "var(--muted)"; e.textContent = lines.extra; tip.appendChild(e); }
+  let x, y;
+  if (evt.type === "focus") { const b = evt.target.getBoundingClientRect(); x = b.left + 40; y = b.top - 8; }
+  else { x = evt.clientX + 14; y = evt.clientY - 10; }
+  tip.style.left = Math.min(x, innerWidth - 300) + "px";
+  tip.style.top = Math.max(8, y - tip.offsetHeight) + "px";
+  tip.style.opacity = 1;
+}
+const hideTip = () => { tip.style.opacity = 0; };
+
+function barPath(x, y, w, h) {
+  if (w < 5) return `M${x},${y}h${Math.max(w, 1)}v${h}h${-Math.max(w, 1)}z`;
+  return `M${x},${y}h${w - 4}a4,4 0 0 1 4,4v${h - 8}a4,4 0 0 1 -4,4h${-(w - 4)}z`;
+}
+
+function smallChart(container, spec) {
+  // spec: {title, desc, ratioText, rows: [{name, value, label, color, tip, extra}]}
+  const fig = document.createElement("figure"); fig.className = "chart";
+  const h = document.createElement("h3"); h.textContent = spec.title; fig.appendChild(h);
+  const d = document.createElement("p"); d.className = "cd"; d.textContent = spec.desc; fig.appendChild(d);
+  if (spec.ratioText) { const r = document.createElement("p"); r.className = "cr"; r.textContent = spec.ratioText; fig.appendChild(r); }
+  container.appendChild(fig);
+  const W = Math.max(280, fig.clientWidth - 32);
+  const labelW = 98, right = spec.rightPad || 120, rowH = 18, gap = 14, top = 10;
+  const H = top + spec.rows.length * (rowH + gap) + 4;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": spec.aria }, fig);
+  const max = Math.max(...spec.rows.map((r) => r.value)) || 1;
+  const x0 = labelW, span = W - labelW - right;
+  el("line", { x1: x0, y1: 4, x2: x0, y2: H - 2, stroke: css("--axis"), "stroke-width": 1 }, svg);
+  spec.rows.forEach((r, i) => {
+    const y = top + i * (rowH + gap);
+    const g = el("g", { class: "row", tabindex: 0, role: "img", "aria-label": `${r.name}：${r.label}` }, svg);
+    const name = el("text", { x: x0 - 10, y: y + 13.5, "text-anchor": "end", fill: css("--ink-2"), "font-size": 13.5 }, g); name.textContent = r.name;
+    const w = Math.max(2, span * r.value / max);
+    el("rect", { x: x0, y: y - 6, width: W - x0, height: rowH + 12, fill: "transparent" }, g);   // 命中区比条大
+    el("path", { d: barPath(x0, y, w, rowH), fill: r.color }, g);
+    const v = el("text", { x: x0 + w + 8, y: y + 13.5, fill: css("--ink"), "font-size": 13.5, "font-weight": 600 }, g); v.textContent = r.label;
+    const info = { value: r.label, name: r.name, color: r.color, extra: r.extra };
+    g.addEventListener("pointermove", (e) => showTip(e, info));
+    g.addEventListener("pointerleave", hideTip);
+    g.addEventListener("focus", (e) => showTip(e, info));
+    g.addEventListener("blur", hideTip);
+  });
+}
+
+function renderResults() {
+  const c = document.getElementById("charts"); c.replaceChildren();
+  const L = css("--local"), S = css("--sandbox");
+  for (const t of DATA.tests) {
+    const lat = t.unit === "µs";
+    const lv = lat ? t.local[0] : t.local, sv = lat ? t.sandbox[0] : t.sandbox;
+    const lab = (v, p99) => lat ? `平均 ${v} µs，p99 ${p99} µs` : `${fmt(v)} ${t.unit}`;
+    const ratio = lat ? `Sandbox 每次多 ${sv - lv} µs` : `Sandbox 是直测的 ${Math.round(100 * sv / lv)}%`;
+    smallChart(c, {
+      title: t.title, desc: t.desc, ratioText: ratio, rightPad: lat ? 190 : 120,
+      aria: `${t.title}：parent 直测 ${lab(lv, lat && t.local[1])}，Sandbox ${lab(sv, lat && t.sandbox[1])}`,
+      rows: [
+        { name: "parent 直测", value: lv, label: lab(lv, lat && t.local[1]), color: L },
+        { name: "Sandbox", value: sv, label: lab(sv, lat && t.sandbox[1]), color: S,
+          extra: lat ? `比直测多 ${sv - lv} µs` : `直测的 ${Math.round(100 * sv / lv)}%` },
+      ],
+    });
+  }
+  // 表格视图
+  const tw = document.getElementById("resultsTable"); tw.replaceChildren();
+  const tb = document.createElement("table");
+  const head = ["测试", "条件", "parent 直测", "Sandbox", "Sandbox / 直测", "另一轮：直测", "另一轮：Sandbox"];
+  const thead = tb.createTHead().insertRow();
+  head.forEach((hname, i) => { const th = document.createElement("th"); th.textContent = hname; if (i > 1) th.className = "n"; thead.appendChild(th); });
+  const body = tb.createTBody();
+  for (const t of DATA.tests) {
+    const lat = t.unit === "µs";
+    const f = (v) => v === undefined ? "–" : lat ? `${v[0]} / ${v[1]} µs` : `${fmt(v)} ${t.unit}`;
+    const ratio = lat ? `+${t.sandbox[0] - t.local[0]} µs` : `${Math.round(100 * t.sandbox / t.local)}%`;
+    const row = body.insertRow();
+    [t.title + (lat ? "（平均 / p99）" : ""), t.desc, f(t.local), f(t.sandbox), ratio, f(t.prevLocal), f(t.prevSandbox)].forEach((v, i) => {
+      const td = row.insertCell(); td.textContent = v; if (i > 1) td.className = "n";
+    });
+  }
+  tw.appendChild(tb);
+}
+
+function renderEngine() {
+  const c = document.getElementById("engineCharts"); c.replaceChildren();
+  const S = css("--sandbox"), G = css("--sync");
+  const rr = DATA.tests.find((t) => t.id === "2-randread-4k").sandbox;
+  const sr = DATA.tests.find((t) => t.id === "5-seqread-1m").sandbox;
+  smallChart(c, { title: "4K 随机读", desc: "QD32 × 4 线程", ratioText: `Sync 只有 Async 的 1/${Math.round(rr / DATA.sync.randread)}`,
+    aria: `4K 随机读：Async ${fmt(rr)} IOPS，Sync ${fmt(DATA.sync.randread)} IOPS`,
+    rows: [{ name: "Async", value: rr, label: `${fmt(rr)} IOPS`, color: S },
+           { name: "Sync（默认）", value: DATA.sync.randread, label: `${fmt(DATA.sync.randread)} IOPS`, color: G }] });
+  smallChart(c, { title: "顺序读", desc: "1 MiB 块，QD32", ratioText: `Sync 只有 Async 的 ${Math.round(100 * DATA.sync.seqread / sr)}%`,
+    aria: `顺序读：Async ${fmt(sr)} MB/s，Sync ${fmt(DATA.sync.seqread)} MB/s`,
+    rows: [{ name: "Async", value: sr, label: `${fmt(sr)} MB/s`, color: S },
+           { name: "Sync（默认）", value: DATA.sync.seqread, label: `${fmt(DATA.sync.seqread)} MB/s`, color: G }] });
+}
+
+function renderAll() { renderPath(); renderResults(); renderEngine(); }
+renderAll();
+let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { renderResults(); renderEngine(); }, 120); });
+
+/* ---------- 表格切换、复制、目录高亮 ---------- */
+document.querySelectorAll(".tbtn").forEach((b) => b.addEventListener("click", () => {
+  const t = document.getElementById(b.dataset.table); t.hidden = !t.hidden;
+  b.textContent = t.hidden ? "用表格查看" : "收起表格";
+}));
+document.querySelectorAll(".copy").forEach((b) => b.addEventListener("click", async () => {
+  const text = b.parentElement.querySelector("code").textContent;
+  try { await navigator.clipboard.writeText(text); }
+  catch { const r = document.createRange(); r.selectNodeContents(b.parentElement.querySelector("code")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); document.execCommand("copy"); s.removeAllRanges(); }
+  b.textContent = "已复制"; setTimeout(() => { b.textContent = "复制"; }, 1400);
+}));
+const links = [...document.querySelectorAll(".toc a")];
+const byId = new Map(links.map((a) => [a.getAttribute("href").slice(1), a]));
+const io = new IntersectionObserver((entries) => {
+  entries.forEach((e) => { if (e.isIntersecting) { links.forEach((a) => a.classList.remove("on")); byId.get(e.target.id)?.classList.add("on"); } });
+}, { rootMargin: "-20% 0px -70% 0px" });
+[...byId.keys()].forEach((id) => { const t = document.getElementById(id); if (t) io.observe(t); });
+</script>
+</body>
+</html>

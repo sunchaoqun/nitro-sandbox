@@ -1,0 +1,28 @@
+6.18.62-127.179.amzn2023.x86_64
+cpu_pool
+dev
+device_pool
+mem_pool
+pcie_slots
+pcie_slots_in_use
+pcie_slots_total
+power
+subsystem
+uevent
+
+Installed:
+  fio-3.32-2.amzn2023.0.3.x86_64                                                
+  fio-engine-http-3.32-2.amzn2023.0.3.x86_64                                    
+  fio-engine-libaio-3.32-2.amzn2023.0.3.x86_64                                  
+  fio-engine-rdma-3.32-2.amzn2023.0.3.x86_64                                    
+  iptables-libs-1.8.8-3.amzn2023.0.2.x86_64                                     
+  iptables-nft-1.8.8-3.amzn2023.0.2.x86_64                                      
+  libnetfilter_conntrack-1.0.8-2.amzn2023.0.2.x86_64                            
+  libnfnetlink-1.0.1-19.amzn2023.0.2.x86_64                                     
+  libnftnl-1.2.2-2.amzn2023.0.2.x86_64                                          
+  librdmacm-48.0-1.amzn2023.0.1.x86_64                                          
+  lzo-2.10-4.amzn2023.0.2.x86_64                                                
+  squashfs-tools-4.5-3.amzn2023.0.2.x86_64                                      
+
+Firecracker v1.18.0
+即将重启，1 分钟后重新登录

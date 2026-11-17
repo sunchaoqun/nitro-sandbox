@@ -1,0 +1,2 @@
+Access Analyzer：策略没有问题
+已更新 alias/nitro-sandbox-workshop-attest 的 key policy（PCR0=22e450ea930cfbcc…）

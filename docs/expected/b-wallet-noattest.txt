@@ -1,0 +1,1 @@
+KMS 拒绝: AccessDeniedException - User: arn:aws:sts::111122223333:assumed-role/nitro-sandbox-workshop/i-0123456789abcdef0 is not authorized to perform: kms:Decrypt on resource: arn:aws:kms:us-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab with an explicit deny in a resource-based policy

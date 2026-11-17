@@ -1,0 +1,5 @@
+账号 111122223333，区域 us-west-1
+ETH key 已存在：alias/nitro-sandbox-workshop-eth
+角色已存在：nitro-sandbox-workshop
+角色策略：kms-eth-sign	kms-generate-random
+完成

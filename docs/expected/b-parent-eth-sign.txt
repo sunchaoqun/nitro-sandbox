@@ -1,0 +1,1 @@
+arn:aws:kms:us-west-1:111122223333:key/abcd1234-ab12-cd34-ef56-abcdef123456	ECDSA_SHA_256

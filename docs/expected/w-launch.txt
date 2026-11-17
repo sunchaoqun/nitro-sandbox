@@ -1,0 +1,6 @@
+IID=i-0123456789abcdef0
+PUBLIC_IP=203.0.113.25
+PRIVATE_IP=10.0.1.25
+大约 1 分钟后可以登录：
+  从公网：ssh -i ~/.ssh/my-key.pem ec2-user@203.0.113.25
+  从同一个 VPC 里：ssh -i ~/.ssh/my-key.pem ec2-user@10.0.1.25

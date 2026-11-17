@@ -1,0 +1,7 @@
+nitro_enclaves.mempool=48G
+mem_pool: 49152 MiB
+pcie_slots: 4
+NAME     SIZE MODEL
+nvme0n1   30G Amazon Elastic Block Store
+nvme1n1  1.7T Amazon EC2 NVMe Instance Storage
+ISD=/dev/disk/by-id/nvme-Amazon_EC2_NVMe_Instance_Storage_AWS1234567890ABCDEF0

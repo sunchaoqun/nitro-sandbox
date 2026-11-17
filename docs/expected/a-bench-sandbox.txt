@@ -1,0 +1,7 @@
+03:26:36 sandbox: 1-seqwrite-64g
+03:29:24 sandbox: 2-randread-4k
+03:30:01 sandbox: 3-randread-4k-qd1
+03:30:37 sandbox: 4-randwrite-4k
+03:31:30 sandbox: 5-seqread-1m
+03:32:10 sandbox: 6-bigfile-64g
+03:34:54 sandbox: 完成 → /home/ec2-user/bench/results/sandbox

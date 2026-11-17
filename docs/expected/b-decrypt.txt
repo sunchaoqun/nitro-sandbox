@@ -1,0 +1,4 @@
+本次 attestation 的 PCR0 : 22e450ea930cfbcc6933363f99bf5dd788605c6c2e61d1f4731aaed3359929b64144b22866c5367a5a299d016e10fbad
+本次 attestation 的 PCR16: 不在文档里（未封口）
+KeyId   : arn:aws:kms:us-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab
+解密结果: hello nitro sandbox

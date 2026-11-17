@@ -1,0 +1,3 @@
+deps OK 1.44.4 0.14.0
+rootfs 上残留的挂载：0
+NAT OK（enp39s0）

@@ -1,0 +1,4 @@
+workshop.env
+.parent
+*.pem
+__pycache__/
