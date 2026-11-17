@@ -700,7 +700,11 @@ bash workstation/cleanup.sh --all
 <details><summary>预期输出</summary>
 
 ```text
-（清理后补上）
+shutting-down
+2026-11-24T11:51:13.451000+08:00
+2026-11-24T11:51:15.707000+08:00
+角色 nitro-sandbox-workshop 已删除
+清理完成
 ```
 </details>
 
