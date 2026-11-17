@@ -657,7 +657,7 @@ crw-rw-rw- 1 root root 10, 258 Nov 17 10:06 /dev/nsm</pre></div>
 import json, os
 R = os.path.join(os.environ.get(&quot;WORK&quot;, os.path.expanduser(&quot;~/bench&quot;)), &quot;results&quot;)
 TESTS = [  # (文件, 显示名, 指标)
-    (&quot;1-seqwrite-64g&quot;, &quot;大块顺序写 64 GiB（裸设备，1M QD32，含 fsync）&quot;, &quot;MB/s&quot;),
+    (&quot;1-seqwrite-64g&quot;, &quot;大块顺序写 64 GiB（直接写块设备，1M QD32，含 fsync）&quot;, &quot;MB/s&quot;),
     (&quot;6-bigfile-64g&quot;, &quot;大文件写入 64 GiB（ext4 文件，1M QD32，含 fsync）&quot;, &quot;MB/s&quot;),
     (&quot;5-seqread-1m&quot;, &quot;顺序读（1M QD32）&quot;, &quot;MB/s&quot;),
     (&quot;2-randread-4k&quot;, &quot;4K 随机读（QD32×4）&quot;, &quot;IOPS&quot;),
@@ -682,7 +682,7 @@ for name, label, unit in TESTS:
     else:
         print(f&quot;{label:&lt;40}{f&#x27;{a:,.0f} {unit}&#x27;:&gt;22}{f&#x27;{b:,.0f} {unit}&#x27;:&gt;18}{f&#x27;{100 * b / a:.0f}%&#x27;:&gt;14}&quot;)</code></pre></details></div>
     <div class="out"><div class="out-h">预期输出</div><pre>测试                                                 parent 直测         Sandbox    Sandbox/直测
-大块顺序写 64 GiB（裸设备，1M QD32，含 fsync）                   1,719 MB/s        1,713 MB/s          100%
+大块顺序写 64 GiB（直接写块设备，1M QD32，含 fsync）                1,719 MB/s        1,713 MB/s          100%
 大文件写入 64 GiB（ext4 文件，1M QD32，含 fsync）               1,706 MB/s        1,719 MB/s          101%
 顺序读（1M QD32）                                        2,134 MB/s        2,142 MB/s          100%
 4K 随机读（QD32×4）                                    300,467 IOPS      244,562 IOPS           81%
@@ -1774,7 +1774,7 @@ echo &quot;清理完成&quot;</code></pre></details></div>
 <div class="tip" id="tip" role="status" aria-live="polite"></div>
 
 <script>
-const DATA = {"tests": [{"id": "6-bigfile-64g", "title": "大文件写入", "desc": "ext4 上写一个 64 GiB 文件，1 MiB 块，QD32，含最后的 fsync", "unit": "MB/s", "local": 1706, "sandbox": 1719}, {"id": "1-seqwrite-64g", "title": "大块顺序写", "desc": "裸设备写 64 GiB，1 MiB 块，QD32，含 fsync", "unit": "MB/s", "local": 1719, "sandbox": 1713}, {"id": "5-seqread-1m", "title": "顺序读", "desc": "1 MiB 块，QD32，30 秒", "unit": "MB/s", "local": 2134, "sandbox": 2142}, {"id": "2-randread-4k", "title": "4K 随机读", "desc": "QD32 × 4 线程，30 秒", "unit": "IOPS", "local": 300467, "sandbox": 244562}, {"id": "4-randwrite-4k", "title": "4K 随机写", "desc": "QD32 × 4 线程，30 秒，含最后的 fsync", "unit": "IOPS", "local": 165119, "sandbox": 164877}, {"id": "3-randread-4k-qd1", "title": "4K 随机读延迟", "desc": "QD1，单线程，30 秒；条长是平均值", "unit": "µs", "local": [74, 84], "sandbox": [98, 119], "latAdd": 23}], "sync": {"randread": 12737, "seqread": 896}};
+const DATA = {"tests": [{"id": "6-bigfile-64g", "title": "大文件写入", "desc": "ext4 上写一个 64 GiB 文件，1 MiB 块，QD32，含最后的 fsync", "unit": "MB/s", "local": 1706, "sandbox": 1719}, {"id": "1-seqwrite-64g", "title": "大块顺序写", "desc": "直接写块设备 64 GiB（Sandbox 里是 /dev/vdb），1 MiB 块，QD32，含 fsync", "unit": "MB/s", "local": 1719, "sandbox": 1713}, {"id": "5-seqread-1m", "title": "顺序读", "desc": "1 MiB 块，QD32，30 秒", "unit": "MB/s", "local": 2134, "sandbox": 2142}, {"id": "2-randread-4k", "title": "4K 随机读", "desc": "QD32 × 4 线程，30 秒", "unit": "IOPS", "local": 300467, "sandbox": 244562}, {"id": "4-randwrite-4k", "title": "4K 随机写", "desc": "QD32 × 4 线程，30 秒，含最后的 fsync", "unit": "IOPS", "local": 165119, "sandbox": 164877}, {"id": "3-randread-4k-qd1", "title": "4K 随机读延迟", "desc": "QD1，单线程，30 秒；条长是平均值", "unit": "µs", "local": [74, 84], "sandbox": [98, 119], "latAdd": 23}], "sync": {"randread": 12737, "seqread": 896}};
 const SVGNS = "http://www.w3.org/2000/svg";
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const el = (tag, attrs = {}, parent) => {

@@ -182,7 +182,7 @@ def stepref(t):
 # ---------------- 结果 ----------------
 R, P, SYNC = DATA["run"], DATA["prev"], DATA["sync"]
 TITLES = {"6-bigfile-64g": ("大文件写入", "ext4 上写一个 64 GiB 文件，1 MiB 块，QD32，含最后的 fsync", "MB/s"),
-          "1-seqwrite-64g": ("大块顺序写", "裸设备写 64 GiB，1 MiB 块，QD32，含 fsync", "MB/s"),
+          "1-seqwrite-64g": ("大块顺序写", "直接写块设备 64 GiB（Sandbox 里是 /dev/vdb），1 MiB 块，QD32，含 fsync", "MB/s"),
           "5-seqread-1m": ("顺序读", "1 MiB 块，QD32，30 秒", "MB/s"),
           "2-randread-4k": ("4K 随机读", "QD32 × 4 线程，30 秒", "IOPS"),
           "4-randwrite-4k": ("4K 随机写", "QD32 × 4 线程，30 秒，含最后的 fsync", "IOPS"),

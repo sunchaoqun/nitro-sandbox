@@ -1,5 +1,5 @@
 测试                                                 parent 直测         Sandbox    Sandbox/直测
-大块顺序写 64 GiB（裸设备，1M QD32，含 fsync）                   1,719 MB/s        1,713 MB/s          100%
+大块顺序写 64 GiB（直接写块设备，1M QD32，含 fsync）                1,719 MB/s        1,713 MB/s          100%
 大文件写入 64 GiB（ext4 文件，1M QD32，含 fsync）               1,706 MB/s        1,719 MB/s          101%
 顺序读（1M QD32）                                        2,134 MB/s        2,142 MB/s          100%
 4K 随机读（QD32×4）                                    300,467 IOPS      244,562 IOPS           81%
