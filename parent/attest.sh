@@ -8,7 +8,8 @@
 #   bash parent/attest.sh eth-send | eth-receipt <交易哈希>   签名并广播到 Sepolia（地址里要有测试币）/ 查是否上链
 #   bash parent/attest.sh stop                          停掉 Sandbox
 set -uo pipefail
-source "$(dirname "$0")/../config.sh"
+HERE=$(cd "$(dirname "$0")" && pwd)                  # 下面会 cd 到 $WORK，先记下脚本目录
+source "$HERE/../config.sh"
 cd "$WORK" && source "$WORK/env"
 TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
 REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
@@ -27,7 +28,7 @@ case "${1:-}" in
       *) echo "用法: bash parent/attest.sh restart normal|changed|debug"; exit 1 ;;
     esac
     "${SB[@]}" poweroff 2>/dev/null
-    bash "$(dirname "$0")/data-disk.sh" >/dev/null          # 数据盘文件（parent 重启后要重新挂载）
+    bash "$HERE/data-disk.sh" >/dev/null          # 数据盘文件（parent 重启后要重新挂载）
     for i in $(seq 1 20); do pgrep -x firecracker >/dev/null || break; sleep 1; done
     sudo pkill -x firecracker; sudo rm -f /tmp/fc.sock
     sudo setsid nohup firecracker --api-sock /tmp/fc.sock --config-file vm-run.json > fc.log 2>&1 < /dev/null &
