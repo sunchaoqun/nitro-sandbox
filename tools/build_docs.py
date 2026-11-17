@@ -323,7 +323,7 @@ def build_md():
     w("2. **以太坊交易怎么签、谁能签**：KMS Sign（私钥不出 KMS）和 attestation 保护的钱包（私钥只在 Sandbox 内存里），外加 Sepolia 上真转一笔")
     w("3. **把整块 instance store 交给 Sandbox 后读写有多快**：和 parent 上直接测对比\n")
     w(f"每一步执行的都是仓库里的脚本，每一步都附了实测的预期输出（2026-11-17，在全新的账号资源上从第 1 步跑到第 {len(STEPS)} 步）。"
-      f"图文版：[docs/index.html](docs/index.html)（打开 GitHub Pages 后可以直接在浏览器里看）。\n")
+      f"图文版（同样的步骤，带结果矩阵和性能图表）：https://sunchaoqun.github.io/nitro-sandbox/\n")
     w("## 结果一览\n")
     w("| 谁来要 | " + " | ".join(c.split("（")[0] for c in MATRIX_COLS) + " |")
     w("|---|---|---|---|")
