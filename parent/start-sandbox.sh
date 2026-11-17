@@ -3,6 +3,8 @@
 set -euo pipefail
 source "$(dirname "$0")/../config.sh"
 cd "$WORK" && source "$WORK/env"
+# Firecracker 写盘走 parent 的 page cache；dirty 门槛没改成固定值的话写入会被卡在 ~400 MB/s（见 setup.sh）
+[ "$(sysctl -n vm.dirty_bytes)" -gt 0 ] || { echo "vm.dirty_bytes 还是 0：先执行 parent/setup.sh（或者 sudo sysctl -p /etc/sysctl.d/90-nitro-sandbox.conf）"; exit 1; }
 ip link show tap0 >/dev/null 2>&1 || sudo ip tuntap add dev tap0 mode tap
 sudo ip addr replace 172.16.0.1/30 dev tap0 && sudo ip link set tap0 up
 

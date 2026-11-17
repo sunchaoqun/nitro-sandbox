@@ -5,6 +5,7 @@ source "$(dirname "$0")/../config.sh"
 grep -o 'nitro_enclaves.mempool=[^ ]*' /proc/cmdline
 echo "mem_pool: $(( $(cat /sys/class/misc/nitro_enclaves/mem_pool/total) / 1048576 )) MiB"
 echo "pcie_slots: $(cat /sys/class/misc/nitro_enclaves/pcie_slots)"   # ≥ 4
+sysctl vm.dirty_bytes vm.dirty_background_bytes                       # 2147483648 / 536870912
 lsblk -d -o NAME,SIZE,MODEL
 
 # NVMe 的编号重启后会变（实测：nvme1n1 一次是 instance store，一次是 EBS 根盘），一律用 by-id 路径
