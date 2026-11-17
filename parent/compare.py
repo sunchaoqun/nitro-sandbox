@@ -3,7 +3,7 @@
 import json, os
 R = os.path.join(os.environ.get("WORK", os.path.expanduser("~/bench")), "results")
 TESTS = [  # (文件, 显示名, 指标)
-    ("1-seqwrite-64g", "大块顺序写 64 GiB（裸设备，1M QD32，含 fsync）", "MB/s"),
+    ("1-seqwrite-64g", "大块顺序写 64 GiB（直接写块设备，1M QD32，含 fsync）", "MB/s"),
     ("6-bigfile-64g", "大文件写入 64 GiB（ext4 文件，1M QD32，含 fsync）", "MB/s"),
     ("5-seqread-1m", "顺序读（1M QD32）", "MB/s"),
     ("2-randread-4k", "4K 随机读（QD32×4）", "IOPS"),
