@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 【parent】同一套 fio 测试，分别跑在 parent 直测和 Sandbox 里。会清空 instance store 上的数据！
 #   bash parent/bench.sh local     直接测 parent 上的 instance store（Sandbox 不要开着）
-#   bash parent/bench.sh sandbox   测 Sandbox 里的 /dev/vdb（就是同一块 instance store）
+#   bash parent/bench.sh sandbox   测 Sandbox 里的 /dev/vdb（同一块 instance store 上 XFS 里的一个文件）
 # 结果：$WORK/results/<local|sandbox>/*.json
 set -euo pipefail
 source "$(dirname "$0")/../config.sh"
@@ -11,7 +11,9 @@ OUT=$WORK/results/$MODE; mkdir -p "$OUT"
 SB="ssh -n -i $WORK/id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@172.16.0.2"
 case $MODE in
   local)   DEV=$ISD;     X() { sudo "$@"; }
-           pgrep -x firecracker >/dev/null && { echo "先停掉 Sandbox：sudo pkill -x firecracker"; exit 1; } ;;
+           pgrep -x firecracker >/dev/null && { echo "先停掉 Sandbox：sudo pkill -x firecracker"; exit 1; }
+           # 直测裸盘会清掉盘上的 XFS；之后 start-sandbox.sh 会重新格式化
+           mountpoint -q /mnt/instance-store && sudo umount /mnt/instance-store ;;
   sandbox) DEV=/dev/vdb; X() { $SB "$(printf '%q ' "$@")"; } ;;
   *) echo "用法: bash parent/bench.sh local|sandbox"; exit 1 ;;
 esac

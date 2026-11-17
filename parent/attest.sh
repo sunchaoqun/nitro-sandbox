@@ -27,6 +27,7 @@ case "${1:-}" in
       *) echo "用法: bash parent/attest.sh restart normal|changed|debug"; exit 1 ;;
     esac
     "${SB[@]}" poweroff 2>/dev/null
+    bash "$(dirname "$0")/data-disk.sh" >/dev/null          # 数据盘文件（parent 重启后要重新挂载）
     for i in $(seq 1 20); do pgrep -x firecracker >/dev/null || break; sleep 1; done
     sudo pkill -x firecracker; sudo rm -f /tmp/fc.sock
     sudo setsid nohup firecracker --api-sock /tmp/fc.sock --config-file vm-run.json > fc.log 2>&1 < /dev/null &
