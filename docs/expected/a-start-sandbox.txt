@@ -4,4 +4,4 @@ Starting enclave with start_flags=0x0 (debug=false)
 vCPU: 4
 NAME  SIZE
 vdb   1.7T
-crw-rw-rw- 1 root root 10, 258 Nov 17 03:26 /dev/nsm
+crw-rw-rw- 1 root root 10, 258 Nov 17 06:15 /dev/nsm

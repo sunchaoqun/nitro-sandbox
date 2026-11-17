@@ -8,6 +8,8 @@
 
 每一步执行的都是仓库里的脚本，每一步都附了实测的预期输出（2026-11-17，在全新的账号资源上从第 1 步跑到第 28 步）。图文版（同样的步骤，带结果矩阵和性能图表）：https://sunchaoqun.github.io/nitro-sandbox/
 
+> **更正（2026-11-17）**：早先版本只给了 i7i.2xlarge 的写入数字（直测的 25%），并把原因说成 Sandbox 本身的限制，这不准确。Sandbox 的写入要经过 parent 内核的缓存回写，速度主要取决于机型：i7i.2xlarge 上 parent 自己带缓存写也只有约 424 MB/s；i7i.8xlarge 上单盘 Sandbox 能写 1,876～2,042 MB/s，两块盘在 Sandbox 里组 RAID 0 能写 4,068 MB/s。大机型上还要把 parent 的 dirty 门槛改成固定值，setup.sh 已经做了。
+
 ## 结果一览
 
 | 谁来要 | 加密的数据 | ETH 钱包私钥 | KMS Sign 签 ETH |
@@ -22,17 +24,47 @@
 
 KMS Sign 那一列只测了前三行：kms:Sign 不支持 attestation，key policy 只能按 IAM 身份放行，所以 parent 也能签。
 
-| instance store | parent 直测 | Sandbox | Sandbox / 直测 |
+| instance store（i7i.2xlarge） | parent 直测 | Sandbox | Sandbox / 直测 |
 |---|---|---|---|
-| 大文件写入 | 1,705 MB/s | 421 MB/s | 25% |
-| 大块顺序写 | 1,738 MB/s | 419 MB/s | 24% |
-| 顺序读 | 2,134 MB/s | 2,139 MB/s | 100% |
-| 4K 随机读 | 300,465 IOPS | 265,267 IOPS | 88% |
-| 4K 随机写 | 165,119 IOPS | 162,969 IOPS | 99% |
-| 4K 随机读延迟（平均 / p99） | 73 / 83 µs | 98 / 212 µs | +25 µs |
-| 4K 随机读，默认 Sync 引擎 | – | 12,927 IOPS | Async 的 1/21 |
+| 大文件写入 | 1,705 MB/s | 425 MB/s | 25% |
+| 大块顺序写 | 1,737 MB/s | 425 MB/s | 24% |
+| 顺序读 | 2,134 MB/s | 2,141 MB/s | 100% |
+| 4K 随机读 | 300,470 IOPS | 239,039 IOPS | 80% |
+| 4K 随机写 | 165,119 IOPS | 169,480 IOPS | 103% |
+| 4K 随机读延迟（平均 / p99） | 74 / 84 µs | 96 / 115 µs | +22 µs |
+| 4K 随机读，默认 Sync 引擎 | – | 12,840 IOPS | Async 的 1/19 |
 
-另一轮是在另一台 i7i.2xlarge 上用同样的步骤测的。两台机器相比，Sandbox/直测：4K 随机读 88～93%，4K 随机写 99～113%，顺序读 100%，大块顺序写 24～25%，大文件写入 25%。
+另一轮是在另一台 i7i.2xlarge 上用同样的步骤测的。早先在第三台 i7i.2xlarge 上（dirty 还没改成固定值）测的写入也是 24～25%。两台机器相比，Sandbox/直测：4K 随机读 80～92%，4K 随机写 102～103%，顺序读 100%，大块顺序写 24～25%，大文件写入 25%。
+
+### 为什么 i7i.2xlarge 上写入只有约 425 MB/s
+
+瓶颈在 parent 内核的缓存回写，不在 Sandbox：Sandbox 关掉、parent 自己用带缓存的方式写同一块盘，速度也一样；CPU 很闲，dirty 门槛和写回限流（blk-wbt）都不影响。
+
+| i7i.2xlarge，顺序写 64 GiB（1 MiB 块，含 fsync） | MB/s |
+|---|---|
+| parent 直测（O_DIRECT） | 1,737 |
+| parent 带缓存写同一块盘（Sandbox 关着，dirty 固定） | 424 |
+| 同上，再关掉写回限流（wbt_lat_usec=0） | 425 |
+| Sandbox，4 vCPU | 425 |
+| Sandbox，2 vCPU（parent 多一个物理核） | 425 |
+| Sandbox，dirty 默认（同一次开机交替测两次） | 419 / 421 |
+| Sandbox，dirty 固定（同上） | 425 / 425 |
+| Sandbox，关掉写回限流 | 425 |
+
+### 换大机型、多盘 RAID 0（i7i.8xlarge 实测）
+
+i7i.8xlarge 有两块 3750 GB NVMe。同样走缓存回写，这台机型上快得多：parent 自己带缓存写单盘能到 2,033 MB/s。parent 的 dirty 门槛必须改成固定值（setup.sh 已经设了），否则只有约 500 MB/s，多线程写还会把 parent 卡死；RAID 0 要在 Sandbox 里做（每块 NVMe 各给一块 virtio 盘），在 parent 上做好再当一块盘给 Sandbox 没有用。
+
+| i7i.8xlarge | 顺序写 MB/s | 顺序读 MB/s | 4K 随机读 IOPS | 4K 随机写 IOPS |
+|---|---|---|---|---|
+| parent 直测：单盘 | 3,654 | 4,267 | 594,865 | 330,677 |
+| parent 直测：两盘 RAID 0 | 7,572 | 8,533 | 950,264 | 661,273 |
+| Sandbox：单盘，dirty 默认 | 491 / 555 | – | – | 216,062 |
+| Sandbox：单盘，dirty 固定 | 2,042 | 3,762 | 273,938 | 306,305 |
+| Sandbox：两块盘，在 Sandbox 里 RAID 0 | 4,068 | 4,422 | 341,875 | 369,889 |
+| Sandbox：parent 上 RAID 0 再当一块盘 | 1,874 | 1,008 | 228,756 | 350,826 |
+
+单位：MB/s、IOPS。Sandbox 4 vCPU，测法和 A 部分一样（fio direct=1，64 GiB 测试区，写入含 fsync）；这组不在 workshop 步骤里。单盘、dirty 固定为 2G 时顺序写测了三次：1,876～2,042 MB/s。dirty 固定为 256M～8G 之间几种取值，单盘顺序写都在 1,918～2,062 MB/s；再关掉写回限流（wbt_lat_usec=0）能从 1,876 到 2,306 MB/s。parent 自己带缓存写：dirty 默认 370、固定 2,033 MB/s。
 
 ## 开始之前
 
@@ -140,7 +172,7 @@ Cloning into 'nitro-sandbox'...
 
 ### 第 5 步：装 fio 和 Firecracker，预留内存池（会重启）（在parent上）
 
-Sandbox 的内存来自驱动预留的连续内存池，不预留就起不来。脚本最后会重启 parent，1 分钟后重新登录，并 cd ~/nitro-sandbox。
+Sandbox 的内存来自驱动预留的连续内存池，不预留就起不来。脚本还会把 dirty 门槛改成固定值（vm.dirty_bytes=2G / vm.dirty_background_bytes=512M），大机型上不改的话 Sandbox 写入只有约 500 MB/s（见常见问题）。最后会重启 parent，1 分钟后重新登录，并 cd ~/nitro-sandbox。
 
 ```bash
 bash parent/setup.sh
@@ -199,6 +231,8 @@ bash parent/after-reboot.sh
 nitro_enclaves.mempool=48G
 mem_pool: 49152 MiB
 pcie_slots: 4
+vm.dirty_bytes = 2147483648
+vm.dirty_background_bytes = 536870912
 NAME     SIZE MODEL
 nvme0n1   30G Amazon Elastic Block Store
 nvme1n1  1.7T Amazon EC2 NVMe Instance Storage
@@ -219,11 +253,11 @@ bash parent/build-guest.sh
 <details><summary>预期输出</summary>
 
 ```text
--rw-------. 1 root root 23570747 Nov 17 03:21 initrd.img
+-rw-------. 1 root root 23570747 Nov 17 06:10 initrd.img
 debconf: delaying package configuration, since apt-utils is not installed
 fio-3.36
 rootfs 上残留的挂载：0
--rw-rw-r--. 1 ec2-user ec2-user 4294967296 Nov 17 03:22 rootfs.ext4
+-rw-rw-r--. 1 ec2-user ec2-user 4294967296 Nov 17 06:11 rootfs.ext4
 ```
 </details>
 
@@ -242,13 +276,13 @@ bash parent/bench.sh local
 <details><summary>预期输出</summary>
 
 ```text
-03:22:23 local: 1-seqwrite-64g
-03:23:03 local: 2-randread-4k
-03:23:39 local: 3-randread-4k-qd1
-03:24:15 local: 4-randwrite-4k
-03:24:50 local: 5-seqread-1m
-03:25:26 local: 6-bigfile-64g
-03:26:07 local: 完成 → /home/ec2-user/bench/results/local
+06:11:30 local: 1-seqwrite-64g
+06:12:10 local: 2-randread-4k
+06:12:46 local: 3-randread-4k-qd1
+06:13:22 local: 4-randwrite-4k
+06:13:57 local: 5-seqread-1m
+06:14:33 local: 6-bigfile-64g
+06:15:14 local: 完成 → /home/ec2-user/bench/results/local
 ```
 </details>
 
@@ -271,7 +305,7 @@ Starting enclave with start_flags=0x0 (debug=false)
 vCPU: 4
 NAME  SIZE
 vdb   1.7T
-crw-rw-rw- 1 root root 10, 258 Nov 17 03:26 /dev/nsm
+crw-rw-rw- 1 root root 10, 258 Nov 17 06:15 /dev/nsm
 ```
 </details>
 
@@ -286,19 +320,19 @@ bash parent/bench.sh sandbox
 <details><summary>预期输出</summary>
 
 ```text
-03:26:36 sandbox: 1-seqwrite-64g
-03:29:24 sandbox: 2-randread-4k
-03:30:01 sandbox: 3-randread-4k-qd1
-03:30:37 sandbox: 4-randwrite-4k
-03:31:30 sandbox: 5-seqread-1m
-03:32:10 sandbox: 6-bigfile-64g
-03:34:54 sandbox: 完成 → /home/ec2-user/bench/results/sandbox
+06:15:20 sandbox: 1-seqwrite-64g
+06:18:05 sandbox: 2-randread-4k
+06:18:42 sandbox: 3-randread-4k-qd1
+06:19:18 sandbox: 4-randwrite-4k
+06:20:02 sandbox: 5-seqread-1m
+06:20:43 sandbox: 6-bigfile-64g
+06:23:26 sandbox: 完成 → /home/ec2-user/bench/results/sandbox
 ```
 </details>
 
 ### 第 11 步：对比结果（在parent上）
 
-读应该在 parent 直测的 85～100%，大块写和大文件写在 25% 上下。和下面 A 的结果对一下。
+i7i.2xlarge 上：读应该在 parent 直测的 80～100%，4K 随机写和直测差不多，大块写和大文件写约 425 MB/s（直测的 25% 左右，原因见 A 的结果）。
 
 ```bash
 python3 parent/compare.py
@@ -310,12 +344,12 @@ python3 parent/compare.py
 
 ```text
 测试                                                 parent 直测         Sandbox    Sandbox/直测
-大块顺序写 64 GiB（裸设备，1M QD32，含 fsync）                   1,738 MB/s          419 MB/s           24%
-大文件写入 64 GiB（ext4 文件，1M QD32，含 fsync）               1,705 MB/s          421 MB/s           25%
-顺序读（1M QD32）                                        2,134 MB/s        2,139 MB/s          100%
-4K 随机读（QD32×4）                                    300,465 IOPS      265,267 IOPS           88%
-4K 随机写（QD32×4，含 fsync）                            165,119 IOPS      162,969 IOPS           99%
-4K 随机读延迟（QD1，平均 / p99）                              73 / 83 µs       98 / 212 µs        +25 µs
+大块顺序写 64 GiB（裸设备，1M QD32，含 fsync）                   1,737 MB/s          425 MB/s           24%
+大文件写入 64 GiB（ext4 文件，1M QD32，含 fsync）               1,705 MB/s          425 MB/s           25%
+顺序读（1M QD32）                                        2,134 MB/s        2,141 MB/s          100%
+4K 随机读（QD32×4）                                    300,470 IOPS      239,039 IOPS           80%
+4K 随机写（QD32×4，含 fsync）                            165,119 IOPS      169,480 IOPS          103%
+4K 随机读延迟（QD1，平均 / p99）                              74 / 84 µs       96 / 115 µs        +22 µs
 ```
 </details>
 
@@ -333,8 +367,8 @@ bash parent/sync-test.sh
 
 ```text
 0
-2-randread-4k 12,927 IOPS 53 MB/s
-5-seqread-1m 592 IOPS 622 MB/s
+2-randread-4k 12,840 IOPS 53 MB/s
+5-seqread-1m 608 IOPS 639 MB/s
 ```
 </details>
 
@@ -713,6 +747,8 @@ shutting-down
 | 现象 | 原因 | 怎么办 |
 |---|---|---|
 | Firecracker 报 `No space left on device (os error 28)` | 没预留内存池 | 做第 5 步（会重启） |
+| 大机型上 Sandbox 写入只有约 500 MB/s，多线程写甚至让 parent 卡死（SSH 都连不上） | 内存池很大时，按比例算的 dirty 门槛把内存池的空闲内存也算进去，但块设备的 page cache 用不了内存池，dirty 页占满剩下的内存 | 第 5 步已经把 dirty 改成固定值（`vm.dirty_bytes=2G` / `vm.dirty_background_bytes=512M`） |
+| i7i.2xlarge 上 Sandbox 写入只有约 425 MB/s | parent 内核缓存回写的上限：parent 自己带缓存写同一块盘也一样，跟 Sandbox 无关 | 要写得快就换大机型（i7i.8xlarge 单盘约 2 GB/s），多块盘在 Sandbox 里组 RAID 0 |
 | Sandbox 里 4K 随机读只有 1～4 万 IOPS | 数据盘没写 io_engine，默认是 Sync，一次只处理一个请求 | 用 parent/start-sandbox.sh 生成的配置（`"io_engine": "Async"`） |
 | Sandbox 里看到的 vdb 只有 30G | NVMe 编号重启后变了，拿到的是 EBS 根盘 | 用 `/dev/disk/by-id/…Instance_Storage_…`（第 6 步） |
 | 读的数字比预期高很多 | 读到了没写过的区域（SSD 不读闪存直接返回），或者 parent 的 page cache 太大 | bench.sh 第一项就是写满测试区；内存池按 config.sh 留 48G，每项前清 cache |

@@ -1,5 +1,5 @@
--rw-------. 1 root root 23570747 Nov 17 03:21 initrd.img
+-rw-------. 1 root root 23570747 Nov 17 06:10 initrd.img
 debconf: delaying package configuration, since apt-utils is not installed
 fio-3.36
 rootfs 上残留的挂载：0
--rw-rw-r--. 1 ec2-user ec2-user 4294967296 Nov 17 03:22 rootfs.ext4
+-rw-rw-r--. 1 ec2-user ec2-user 4294967296 Nov 17 06:11 rootfs.ext4

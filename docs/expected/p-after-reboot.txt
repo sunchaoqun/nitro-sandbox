@@ -1,6 +1,8 @@
 nitro_enclaves.mempool=48G
 mem_pool: 49152 MiB
 pcie_slots: 4
+vm.dirty_bytes = 2147483648
+vm.dirty_background_bytes = 536870912
 NAME     SIZE MODEL
 nvme0n1   30G Amazon Elastic Block Store
 nvme1n1  1.7T Amazon EC2 NVMe Instance Storage

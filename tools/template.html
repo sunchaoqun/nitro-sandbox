@@ -118,6 +118,7 @@ main h2 + p, .prose { max-width: 42em; color: var(--ink-2); }
 .out pre { margin: 0; padding: 4px 14px 12px; overflow-x: auto; font: 13px/1.6 var(--mono); color: var(--ink-2); }
 
 
+.fix { max-width: 62em; font-size: 14.5px; color: var(--ink-2); background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--warn); border-radius: 10px; padding: 10px 16px; margin: 0 0 22px; }
 /* 首屏矩阵 */
 .mfig { margin: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; padding: 6px 6px 0; overflow-x: auto; }
 .mfig figcaption { font-size: 13.5px; color: var(--muted); padding: 10px 14px 14px; max-width: 70em; }
@@ -181,9 +182,12 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--rul
 <div class="bar"><span>EC2 Nitro Sandbox Workshop（2026-11-17 实测），仓库 <a href="https://github.com/sunchaoqun/nitro-sandbox">github.com/sunchaoqun/nitro-sandbox</a></span><button class="theme" type="button" id="theme">切换深色</button></div>
 
 <header class="hero">
-  <h1>EC2 Nitro Sandbox 实测：只有镜像没被改过的 Sandbox 才拿得到 KMS 里的密钥，instance store 读得和直测一样快</h1>
+  <h1>EC2 Nitro Sandbox 实测：只有镜像没被改过的 Sandbox 才拿得到 KMS 里的密钥；instance store 读得和直测一样快，写入速度取决于机型</h1>
   <p class="lead">在一台 i7i.2xlarge 上从零搭起来，测三件事：KMS 能不能只对 PCR 匹配的 Sandbox 放行；以太坊交易怎么签、谁能签；
     把整块 instance store 交给 Sandbox 之后读写有多快。下面 {{NSTEPS}} 步照着做大约一个半小时，能得到和这里一样的结果。每一步执行的都是仓库里的脚本。</p>
+  <p class="fix"><strong>更正（2026-11-17）：</strong>早先版本只给了 i7i.2xlarge 的写入数字（直测的 25%），并把原因说成 Sandbox 本身的限制，这不准确。
+    重新实测的结论是：Sandbox 的写入要经过 parent 内核的缓存回写，速度主要取决于机型。i7i.2xlarge 上 parent 自己带缓存写也只有约 {{X2_BUF}} MB/s；
+    i7i.8xlarge 上单盘 Sandbox 能写约 {{X8_SB1}} MB/s，两块盘在 Sandbox 里组 RAID 0 能写约 {{X8_SB2}} MB/s。大机型上还要把 parent 的 dirty 门槛改成固定值，setup.sh 已经做了。详见 <a href="#large">A 的结果</a>。</p>
   <figure class="mfig">
     <!--MATRIX-->
     <figcaption>2026-11-17 实测，每一格都能点开看对应步骤和原始输出。七行全部和预期一致。
@@ -215,6 +219,7 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--rul
         <dt>机器</dt><dd>i7i.2xlarge（8 vCPU，64 GiB），1 块 1875 GB NVMe instance store，us-west-1 按需价 $0.83/小时；实例角色 nitro-sandbox-workshop</dd>
         <dt>系统</dt><dd>Amazon Linux 2023，kernel 6.18.62，Firecracker v1.18.0，内存池 48 GiB</dd>
         <dt>Sandbox</dt><dd>confidential 模式（非 debug），4 个独占 vCPU，4 GiB 内存；内核用 parent 的 /boot/vmlinuz，initrd 由 dracut 生成，rootfs 是 Ubuntu 24.04</dd>
+        <dt>parent 设置</dt><dd>dirty 门槛固定为 2 GiB / 512 MiB（<code>vm.dirty_bytes</code> / <code>vm.dirty_background_bytes</code>，setup.sh 写进 /etc/sysctl.d/）</dd>
         <dt>A 部分</dt><dd>fio <code>direct=1</code>：大文件写入、大块顺序写、顺序读、4K 随机读、4K 随机写、QD1 读延迟，parent 直测和 Sandbox 各跑一遍</dd>
         <dt>B 部分</dt><dd>KMS key 只认这台 Sandbox 的 PCR0：带 attestation 解密和 ETH 钱包；不带 attestation、parent、封口、改镜像、debug 模式都必须被拒；外加 KMS Sign 签 ETH 交易和 Sepolia 真转一笔</dd>
         <dt>机器分工</dt><dd>标着"工作机"的步骤在你自己的电脑上做（装好 AWS CLI v2、git、python3），其余都在 parent 上做；两边都要 clone 这个仓库。Sandbox 里不用手动操作，脚本会自己 ssh 进去</dd>
@@ -238,20 +243,20 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--rul
     </section>
 
     <section id="a-results">
-      <h2>A 的结果：读和直测几乎一样，写只有四分之一</h2>
+      <h2>A 的结果：读和直测几乎一样，写入取决于机型</h2>
       <figure class="path">
         <svg viewBox="0 0 1000 300" role="img" aria-labelledby="pathTitle pathDesc">
           <title id="pathTitle">两条 I/O 路径</title>
           <desc id="pathDesc">parent 直测时，fio 用 O_DIRECT 直接读写 NVMe。Sandbox 里的 fio 要依次经过 virtio-blk、DMB 共享缓冲区、parent 上的 Firecracker 和 parent 的 page cache，才到同一块 NVMe。</desc>
           <g id="pathArt"></g>
         </svg>
-        <figcaption>两条路径终点是同一块盘。Sandbox 的每次读写都要先交给 parent 上的 Firecracker 进程处理；Firecracker 不用 O_DIRECT，写入要经过 parent 的 page cache 回写，这就是写入变慢的地方。</figcaption>
+        <figcaption>两条路径终点是同一块盘。Sandbox 的每次读写都要先交给 parent 上的 Firecracker 进程处理。Firecracker 打开盘时不用 O_DIRECT，写入先进 parent 的 page cache，再由 parent 内核回写到盘：回写能多快，Sandbox 就能写多快。</figcaption>
       </figure>
       <div class="tiles" aria-label="Sandbox 相对 parent 直测">
 <!--TILES-->
       </div>
-      <h3 class="sub">每一项</h3>
-      <p class="prose">每张图有自己的刻度，条越长越好；延迟那张条越短越好。悬停或用 Tab 键聚焦到条上可以看具体数字。</p>
+      <h3 class="sub">i7i.2xlarge 的每一项</h3>
+      <p class="prose">下面是按本手册步骤在 i7i.2xlarge 上的实测。每张图有自己的刻度，条越长越好；延迟那张条越短越好。悬停或用 Tab 键聚焦到条上可以看具体数字。</p>
       <div class="legend" aria-hidden="true"><span><i style="background:var(--local)"></i>parent 直测</span><span><i style="background:var(--sandbox)"></i>Sandbox</span></div>
       <div class="charts" id="charts"></div>
       <div class="tools"><button class="tbtn" type="button" data-table="resultsTable">用表格查看</button></div>
@@ -263,12 +268,20 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--rul
       <div class="legend" aria-hidden="true"><span><i style="background:var(--sandbox)"></i>Sandbox，Async</span><span><i style="background:var(--sync)"></i>Sandbox，Sync（默认）</span></div>
       <div class="charts" id="engineCharts"></div>
 
+      <h3 class="sub" id="why2x">为什么 i7i.2xlarge 上写入只有约 {{SANDBOX_WRITE}} MB/s</h3>
+      <p class="prose">瓶颈在 parent 内核的缓存回写，不在 Sandbox：Sandbox 关掉、parent 自己用带缓存的方式写同一块盘，速度也一样。CPU 很闲，dirty 门槛和写回限流（blk-wbt）都不影响。实测回写时同时在路上的数据只有 1～2 MB，盘的并发几乎没用上（O_DIRECT 队列深度 32 时同一块盘能写 1.7 GB/s）。</p>
+<!--X2_EVIDENCE-->
+
+      <h3 class="sub" id="large">换大机型、多盘 RAID 0（i7i.8xlarge 实测）</h3>
+      <p class="prose">i7i.8xlarge 有两块 3750 GB NVMe。同样走缓存回写，这台机型上快得多：parent 自己带缓存写单盘能到 {{X8_BUF}} MB/s。两点要注意：parent 的 dirty 门槛必须改成固定值（setup.sh 已经设了 <code>vm.dirty_bytes=2G</code>、<code>vm.dirty_background_bytes=512M</code>），否则 Sandbox 写入只有约 500 MB/s，多线程写还会把 parent 卡死；RAID 0 要在 Sandbox 里做（每块 NVMe 各给一块 virtio 盘），在 parent 上做好再当一块盘给 Sandbox 没有用。</p>
+<!--X8_TABLE-->
+
       <h3 class="sub">怎么看</h3>
       <ul class="prose">
-        <li><strong>读几乎不受影响。</strong>顺序读是直测的 {{SEQREAD_PCT}}%，4K 随机读是 {{RANDREAD_PCT}}%。代价在延迟：每次读多 {{LAT_ADD}} µs（经过 virtio、DMB 和 Firecracker 用户态），p99 从 83 µs 变成 230 µs。</li>
-        <li><strong>大块写和大文件写只有直测的 {{BIGFILE_PCT}}% 左右</strong>（约 {{SANDBOX_WRITE}} MB/s）。Firecracker 打开设备时不用 O_DIRECT，写入要先进 parent 的 page cache 再回写，fsync 要等回写完成。这是 Sandbox 写入的瓶颈，调 DMB 大小没有用。</li>
-        <li><strong>4K 随机写是直测的 {{RANDWRITE_PCT}}%，不代表 Sandbox 写得更快。</strong>直测是纯随机的 4K O_DIRECT；Sandbox 的写先进 parent 的 page cache，内核回写时按偏移排序、把相邻的 4K 合并成大块。fsync 的时间已经算进去了。测试区越大、写得越分散，这个优势越小。</li>
-        <li><strong>parent 能读到 Sandbox 写进盘的明文</strong>（数据路径经过 parent）。需要保密就在 Sandbox 里用 dm-crypt 加密，实测开销几乎为零；要防篡改再加 dm-integrity（LUKS2 AEAD），代价主要在写：随机写降到 1/8 左右，一次 fdatasync 约 440 µs。</li>
+        <li><strong>读几乎不受影响。</strong>i7i.2xlarge 上顺序读是直测的 {{SEQREAD_PCT}}%，4K 随机读是 {{RANDREAD_PCT}}%。代价在延迟：每次读多 {{LAT_ADD}} µs（经过 virtio、DMB 和 Firecracker 用户态），p99 从 {{P99_LOCAL}} µs 变成 {{P99_SB}} µs。每个 Sandbox 的 4K 随机读大约在 24～34 万 IOPS，大机型上加盘、加 vCPU 也突破不了。</li>
+        <li><strong>大块写和大文件写取决于 parent 的缓存回写。</strong>i7i.2xlarge 上约 {{SANDBOX_WRITE}} MB/s（直测的 {{BIGFILE_PCT}}%）；i7i.8xlarge 上单盘约 {{X8_SB1}} MB/s，两块盘在 Sandbox 里 RAID 0 约 {{X8_SB2}} MB/s。要写得快就选大机型、多块盘。</li>
+        <li><strong>4K 随机写和直测差不多</strong>（{{RANDWRITE_PCT}}%，含最后的 fsync）：Sandbox 的写先进 parent 的 page cache，内核回写时会把相邻的 4K 合并，抵消了一部分开销。</li>
+        <li><strong>parent 能读到 Sandbox 写进盘的明文</strong>（数据路径经过 parent）。需要保密就在 Sandbox 里用 dm-crypt 加密，i7i.2xlarge 上实测对读写速度几乎没有影响；要防篡改可以再加 dm-integrity，它会明显降低写入速度，本手册没有测。</li>
       </ul>
     </section>
 
@@ -388,7 +401,7 @@ function renderPath() {
   line(697, 184, 697, 156, S);
   line(772, 134, 828, 134, S);
   note(532, 282, "每次读写多 ~{{LAT_ADD}} µs", "middle");
-  note(697, 104, "没有 O_DIRECT：写在这里被限速", "middle");
+  note(697, 104, "写入先进 page cache，再由 parent 内核回写", "middle");
   // 共用的盘
   box(828, 34, 160, 222, "NVMe", "instance store");
   const t = el("text", { x: 908, y: 176, "text-anchor": "middle", fill: muted, "font-size": 12.5 }, g); t.textContent = "同一块 1875 GB 盘";

@@ -1,7 +1,7 @@
-03:22:23 local: 1-seqwrite-64g
-03:23:03 local: 2-randread-4k
-03:23:39 local: 3-randread-4k-qd1
-03:24:15 local: 4-randwrite-4k
-03:24:50 local: 5-seqread-1m
-03:25:26 local: 6-bigfile-64g
-03:26:07 local: 完成 → /home/ec2-user/bench/results/local
+06:11:30 local: 1-seqwrite-64g
+06:12:10 local: 2-randread-4k
+06:12:46 local: 3-randread-4k-qd1
+06:13:22 local: 4-randwrite-4k
+06:13:57 local: 5-seqread-1m
+06:14:33 local: 6-bigfile-64g
+06:15:14 local: 完成 → /home/ec2-user/bench/results/local
