@@ -56,6 +56,9 @@ for key, unit in TESTS:
     data["run"][key] = {m: metric(f"{RUN}/{m}/{key}.json", unit) for m in ("local", "sandbox")}
     if PREV and os.path.exists(f"{PREV}/local/{key}.json"):
         data["prev"][key] = {m: metric(f"{PREV}/{m}/{key}.json", unit) for m in ("local", "sandbox")}
+# QD1 延迟增量用没四舍五入的平均值算（和 parent/compare.py 一致）
+lat = lambda m: job(f"{RUN}/{m}/3-randread-4k-qd1.json")["read"]["clat_ns"]["mean"] / 1000
+data["run"]["3-randread-4k-qd1"]["lat_add"] = round(lat("sandbox") - lat("local"))
 data["sync"] = {"randread": metric(f"{RUN}/sandbox-sync/2-randread-4k.json", "IOPS"),
                 "seqread": metric(f"{RUN}/sandbox-sync/5-seqread-1m.json", "MB/s")}
 json.dump(data, open(os.path.join(REPO, "docs", "data", "results.json"), "w"), ensure_ascii=False, indent=1)

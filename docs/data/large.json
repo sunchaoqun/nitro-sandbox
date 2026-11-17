@@ -1,82 +1,113 @@
 {
+ "req": {
+  "x2": [
+   {
+    "label": "裸盘 O_DIRECT（QD32）",
+    "mbs": 1733,
+    "reqs": 13003,
+    "kib": 128
+   },
+   {
+    "label": "裸盘 带缓存写",
+    "mbs": 425,
+    "reqs": 163214,
+    "kib": 3
+   },
+   {
+    "label": "XFS 文件 带缓存写",
+    "mbs": 1709,
+    "reqs": 12841,
+    "kib": 128
+   },
+   {
+    "label": "Sandbox，数据盘是 XFS 上的文件",
+    "mbs": 1701,
+    "reqs": 12647,
+    "kib": 128
+   }
+  ],
+  "x8": [
+   {
+    "label": "裸盘 O_DIRECT（QD32）",
+    "mbs": 3622,
+    "reqs": 26597,
+    "kib": 128
+   },
+   {
+    "label": "裸盘 带缓存写",
+    "mbs": 1927,
+    "reqs": 197362,
+    "kib": 9
+   },
+   {
+    "label": "XFS 文件 带缓存写",
+    "mbs": 3539,
+    "reqs": 26057,
+    "kib": 128
+   },
+   {
+    "label": "Sandbox，数据盘是 XFS 上的文件",
+    "mbs": 3529,
+    "reqs": 25375,
+    "kib": 128
+   }
+  ]
+ },
  "x8": {
   "host_1disk": {
-   "seqwrite": 3654,
-   "seqread": 4267,
-   "randread": 594865,
-   "randwrite": 330677
+   "seqwrite": 3612,
+   "seqread": 3640,
+   "randread": 593778,
+   "randwrite": 330676
   },
+  "sb_1disk": {
+   "seqwrite": 3592,
+   "seqread": 4098,
+   "randread": 251338,
+   "randwrite": 302195
+  },
+  "sb_1disk_bigfile": 3558,
+  "host_bigfile": 3631,
   "host_raid0": {
    "seqwrite": 7572,
    "seqread": 8533,
    "randread": 950264,
    "randwrite": 661273
   },
-  "sb_1disk_default": {
-   "seqwrite": [
+  "sb_2file_raid0": {
+   "seqwrite": 7528,
+   "seqread": 5087,
+   "randread": 310818,
+   "randwrite": 377713
+  },
+  "raw_old": {
+   "sb_1disk_default": [
     491,
     555
    ],
-   "randwrite": 216062
-  },
-  "sb_1disk": {
-   "seqwrite": 2042,
-   "seqread": 3762,
-   "randread": 273938,
-   "randwrite": 306305,
-   "seqwrite_runs_2g": [
+   "sb_1disk_fixed": [
     2042,
     2037,
     1876
-   ]
+   ],
+   "sb_hostraid_seqread": 1008
   },
-  "sb_2disk_raid0": {
-   "seqwrite": 4068,
-   "seqread": 4422,
-   "randread": 341875,
-   "randwrite": 369889
-  },
-  "sb_hostraid": {
-   "seqwrite": 1874,
-   "seqread": 1008,
-   "randread": 228756,
-   "randwrite": 350826
-  },
-  "sens_seqwrite": {
-   "default": 555,
-   "256M-64M": 2062,
-   "1G-256M": 1986,
-   "2G-512M": 2037,
-   "8G-2G": 1918
-  },
-  "host_bufwrite": {
-   "default": 370,
-   "fixed": 2033,
-   "fixed_wbt_off": 2332
-  },
-  "sb_seqwrite_wbt": {
-   "on": 1876,
-   "off": 2306
-  }
+  "host_bufwrite_default": 370,
+  "host_bufwrite_fixed": 2033,
+  "host_1disk_seqread_other": 4267
  },
- "x2": {
-  "host_direct_seqwrite": 1737,
-  "host_bufwrite": {
-   "fixed": 424,
-   "fixed_wbt_off": 425
-  },
-  "sb_seqwrite": {
-   "vcpu4": 425,
-   "vcpu2": 425,
-   "dirty_default": [
-    419,
-    421
-   ],
-   "dirty_fixed": [
-    425,
-    425
-   ],
-   "wbt_off": 425
-  }
+ "x2_raw_old": {
+  "sb_seqwrite": 425,
+  "host_bufwrite": 424,
+  "dirty_default": [
+   419,
+   421
+  ],
+  "dirty_fixed": [
+   425,
+   425
+  ],
+  "wbt_off": 425,
+  "vcpu2": 425
  }
 }

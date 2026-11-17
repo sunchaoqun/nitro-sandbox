@@ -182,12 +182,10 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--rul
 <div class="bar"><span>EC2 Nitro Sandbox Workshop（2026-11-17 实测），仓库 <a href="https://github.com/sunchaoqun/nitro-sandbox">github.com/sunchaoqun/nitro-sandbox</a></span><button class="theme" type="button" id="theme">切换深色</button></div>
 
 <header class="hero">
-  <h1>EC2 Nitro Sandbox 实测：只有镜像没被改过的 Sandbox 才拿得到 KMS 里的密钥；instance store 读得和直测一样快，写入速度取决于机型</h1>
+  <h1>EC2 Nitro Sandbox 实测：只有镜像没被改过的 Sandbox 才拿得到 KMS 里的密钥；把 instance store 交给 Sandbox，顺序读写和直测基本一样</h1>
   <p class="lead">在一台 i7i.2xlarge 上从零搭起来，测三件事：KMS 能不能只对 PCR 匹配的 Sandbox 放行；以太坊交易怎么签、谁能签；
     把整块 instance store 交给 Sandbox 之后读写有多快。下面 28 步照着做大约一个半小时，能得到和这里一样的结果。每一步执行的都是仓库里的脚本。</p>
-  <p class="fix"><strong>更正（2026-11-17）：</strong>早先版本只给了 i7i.2xlarge 的写入数字（直测的 25%），并把原因说成 Sandbox 本身的限制，这不准确。
-    重新实测的结论是：Sandbox 的写入要经过 parent 内核的缓存回写，速度主要取决于机型。i7i.2xlarge 上 parent 自己带缓存写也只有约 424 MB/s；
-    i7i.8xlarge 上单盘 Sandbox 能写约 1,876～2,042 MB/s，两块盘在 Sandbox 里组 RAID 0 能写约 4,068 MB/s。大机型上还要把 parent 的 dirty 门槛改成固定值，setup.sh 已经做了。详见 <a href="#large">A 的结果</a>。</p>
+  <p class="fix"><strong>更正（2026-11-17）：</strong>早先版本把 instance store 的裸盘直接交给 Sandbox，测出写入只有直测的 25%（i7i.2xlarge 约 425 MB/s），并把它说成 Sandbox 的限制，这是错的。根因是 parent 回写裸块设备的 page cache 时会拆成平均约 3 KiB 的小请求，被盘的写 IOPS 上限卡住：parent 自己这样写也只有 424 MB/s。现在 start-sandbox.sh 用 instance store 上 XFS 里的一个文件当数据盘，回写是 128 KiB 的请求，Sandbox 顺序写达到直测的 100%（i7i.2xlarge）和 99%（i7i.8xlarge）。详见 <a href="#whyfile">A 的结果</a>。</p>
   <figure class="mfig">
     <table class="matrix"><thead><tr><th>谁来要</th><th>加密的数据<br><small>kms:Decrypt + attestation</small></th><th>ETH 钱包私钥<br><small>GenerateDataKeyPair / Decrypt + attestation</small></th><th>KMS Sign 签 ETH<br><small>kms:Sign，私钥不出 KMS</small></th></tr></thead><tbody><tr><th scope="row">Sandbox，原镜像，带 attestation</th><td class="m-ok"><a href="#s-dec"><span class="mk mk-ok">✓</span>能解开<span class="sn">第 16 步</span></a></td><td class="m-ok"><a href="#s-wallet"><span class="mk mk-ok">✓</span>能创建、能签名<span class="sn">第 18 步</span></a></td><td class="m-ok"><a href="#s-sign"><span class="mk mk-ok">✓</span>能签<span class="sn">第 20 步</span></a></td></tr><tr><th scope="row">Sandbox，不带 attestation</th><td class="m-no"><a href="#s-neg"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 17 步</span></a></td><td class="m-no"><a href="#s-walletneg"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 19 步</span></a></td><td class="m-na"><span class="na">不适用</span></td></tr><tr><th scope="row">parent，用同一个实例角色</th><td class="m-no"><a href="#s-neg"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 17 步</span></a></td><td class="m-no"><a href="#s-walletneg"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 19 步</span></a></td><td class="m-warn"><a href="#s-signneg"><span class="mk mk-warn">⚠</span>也能签<span class="sn">第 21 步</span></a></td></tr><tr><th scope="row">封口之后（PCR16 已锁定）</th><td class="m-no"><a href="#s-seal"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 22 步</span></a></td><td class="m-no"><a href="#s-seal"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 22 步</span></a></td><td class="m-na"><span class="na">不适用</span></td></tr><tr><th scope="row">改过镜像（cmdline 多一个 quiet）</th><td class="m-no"><a href="#s-changed"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 23 步</span></a></td><td class="m-no"><a href="#s-changed"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 23 步</span></a></td><td class="m-na"><span class="na">不适用</span></td></tr><tr><th scope="row">debug 模式（PCR0～2 全零）</th><td class="m-no"><a href="#s-debug"><span class="mk mk-no">✕</span>拒绝<span class="sn">第 24 步</span></a></td><td class="m-skip"><span class="na">没测</span></td><td class="m-na"><span class="na">不适用</span></td></tr><tr><th scope="row">恢复原镜像重启</th><td class="m-ok"><a href="#s-restore"><span class="mk mk-ok">✓</span>能解开<span class="sn">第 25 步</span></a></td><td class="m-ok"><a href="#s-restore"><span class="mk mk-ok">✓</span>能签名<span class="sn">第 25 步</span></a></td><td class="m-na"><span class="na">不适用</span></td></tr></tbody></table>
     <figcaption>2026-11-17 实测，每一格都能点开看对应步骤和原始输出。七行全部和预期一致。
@@ -203,7 +201,7 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--rul
     </ul>
     <ul class="toc-steps">
 <li class="toc-part"><span>准备</span><ol><li><a href="#s-clone">1. clone 仓库，填好 workshop.env</a></li><li><a href="#s-prereq">2. 创建实例角色和 ETH 签名 key</a></li><li><a href="#s-launch">3. 开一台带 instance store 的 parent</a></li><li><a href="#s-pclone">4. 登录 parent，clone 仓库</a></li><li><a href="#s-setup">5. 装 fio 和 Firecracker，预留内存池（会重启）</a></li><li><a href="#s-reboot">6. 确认内存池，记下 instance store 的稳定路径</a></li><li><a href="#s-guest">7. 准备 Sandbox 的内核、initrd 和 rootfs</a></li></ol></li>
-<li class="toc-part"><span>A. instance store 性能</span><ol><li><a href="#s-local">8. 测 parent 直测（这时 Sandbox 还没开）</a></li><li><a href="#s-start">9. 启动 Sandbox，把整块 instance store 交给它</a></li><li><a href="#s-sandbox">10. 测 Sandbox</a></li><li><a href="#s-compare">11. 对比结果</a></li><li><a href="#s-sync">12. （可选）看看默认的 Sync 引擎有多慢</a></li></ol></li>
+<li class="toc-part"><span>A. instance store 性能</span><ol><li><a href="#s-local">8. 测 parent 直测（这时 Sandbox 还没开）</a></li><li><a href="#s-start">9. 启动 Sandbox，数据盘是 instance store 上 XFS 里的文件</a></li><li><a href="#s-sandbox">10. 测 Sandbox</a></li><li><a href="#s-compare">11. 对比结果</a></li><li><a href="#s-sync">12. （可选）看看默认的 Sync 引擎有多慢</a></li></ol></li>
 <li class="toc-part"><span>B. Attestation 和 ETH 签名</span><ol><li><a href="#s-pydeps">13. 给 rootfs 装 Python 依赖和脚本，配好 NAT</a></li><li><a href="#s-probe">14. 启动 Sandbox，跑 NSM 探针，记下 PCR0</a></li><li><a href="#s-key">15. 创建只认这个 PCR0 的 KMS key</a></li><li><a href="#s-dec">16. 加密，再带 attestation 解密</a></li><li><a href="#s-neg">17. 负面测试：不带 attestation、parent 直接解密</a></li><li><a href="#s-wallet">18. attestation 保护的 ETH 钱包：创建并签名</a></li><li><a href="#s-walletneg">19. 钱包的负面测试：不带 attestation、parent 直接解密私钥</a></li><li><a href="#s-sign">20. KMS Sign 签 ETH 交易（私钥不出 KMS）</a></li><li><a href="#s-signneg">21. 对照：parent 用同一个角色也能让 KMS 签</a></li><li><a href="#s-seal">22. 封口：扩展并锁定 PCR16，之后 KMS 什么都不给</a></li><li><a href="#s-changed">23. 改镜像：cmdline 多一个 quiet，PCR0 就变了</a></li><li><a href="#s-debug">24. debug 模式：PCR0/1/2 全是零</a></li><li><a href="#s-restore">25. 恢复原配置重启：PCR0 和第一次一样，又能解开了</a></li><li><a href="#s-send">26. （可选）在 Sepolia 上真的转一笔</a></li><li><a href="#s-trail">27. 在 CloudTrail 里看是谁签的</a></li></ol></li>
 <li class="toc-part"><span>清理</span><ol><li><a href="#s-clean">28. 清理</a></li></ol></li>
     </ul>
@@ -221,7 +219,7 @@ footer { color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--rul
       <dl class="env">
         <dt>机器</dt><dd>i7i.2xlarge（8 vCPU，64 GiB），1 块 1875 GB NVMe instance store，us-west-1 按需价 $0.83/小时；实例角色 nitro-sandbox-workshop</dd>
         <dt>系统</dt><dd>Amazon Linux 2023，kernel 6.18.62，Firecracker v1.18.0，内存池 48 GiB</dd>
-        <dt>Sandbox</dt><dd>confidential 模式（非 debug），4 个独占 vCPU，4 GiB 内存；内核用 parent 的 /boot/vmlinuz，initrd 由 dracut 生成，rootfs 是 Ubuntu 24.04</dd>
+        <dt>Sandbox</dt><dd>confidential 模式（非 debug），4 个独占 vCPU，4 GiB 内存；内核用 parent 的 /boot/vmlinuz，initrd 由 dracut 生成，rootfs 是 Ubuntu 24.04；数据盘是 instance store 上 XFS 里的一个预分配文件（data-disk.sh）</dd>
         <dt>parent 设置</dt><dd>dirty 门槛固定为 2 GiB / 512 MiB（<code>vm.dirty_bytes</code> / <code>vm.dirty_background_bytes</code>，setup.sh 写进 /etc/sysctl.d/）</dd>
         <dt>A 部分</dt><dd>fio <code>direct=1</code>：大文件写入、大块顺序写、顺序读、4K 随机读、4K 随机写、QD1 读延迟，parent 直测和 Sandbox 各跑一遍</dd>
         <dt>B 部分</dt><dd>KMS key 只认这台 Sandbox 的 PCR0：带 attestation 解密和 ETH 钱包；不带 attestation、parent、封口、改镜像、debug 模式都必须被拒；外加 KMS Sign 签 ETH 交易和 Sepolia 真转一笔</dd>
@@ -374,7 +372,7 @@ cd nitro-sandbox</code></pre></div>
   <div class="step-n" aria-hidden="true">5</div>
   <div class="step-b">
     <h3>装 fio 和 Firecracker，预留内存池（会重启） <span class="where where-p">在 parent 上</span></h3>
-    <p>Sandbox 的内存来自驱动预留的连续内存池，不预留就起不来。脚本还会把 dirty 门槛改成固定值（vm.dirty_bytes=2G / vm.dirty_background_bytes=512M），大机型上不改的话 Sandbox 写入只有约 500 MB/s（见常见问题）。最后会重启 parent，1 分钟后重新登录，并 cd ~/nitro-sandbox。</p>
+    <p>Sandbox 的内存来自驱动预留的连续内存池，不预留就起不来。脚本还会把 dirty 门槛改成固定值（vm.dirty_bytes=2G / vm.dirty_background_bytes=512M），大内存池时默认按比例的门槛会让 parent 在大量写入时卡死（见常见问题）。最后会重启 parent，1 分钟后重新登录，并 cd ~/nitro-sandbox。</p>
     <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/setup.sh</code></pre></div>
     <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/setup.sh">parent/setup.sh</a>（23 行）</summary><pre><code>#!/usr/bin/env bash
 # 【parent】确认驱动支持 Sandbox，装 fio 和 Firecracker，预留内存池，然后重启
@@ -516,12 +514,12 @@ rootfs 上残留的挂载：0
   <div class="step-n" aria-hidden="true">8</div>
   <div class="step-b">
     <h3>测 parent 直测（这时 Sandbox 还没开） <span class="where where-p">在 parent 上</span></h3>
-    <p>直接读写 instance store，作为对比基线。会清空盘上的数据。大约 4 分钟。</p>
+    <p>直接读写 instance store 裸盘（O_DIRECT），作为对比基线。会清空盘上的数据（包括 XFS，之后 start-sandbox.sh 会重新格式化）。大约 4 分钟。</p>
     <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/bench.sh local</code></pre></div>
-    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/bench.sh">parent/bench.sh</a>（36 行）</summary><pre><code>#!/usr/bin/env bash
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/bench.sh">parent/bench.sh</a>（38 行）</summary><pre><code>#!/usr/bin/env bash
 # 【parent】同一套 fio 测试，分别跑在 parent 直测和 Sandbox 里。会清空 instance store 上的数据！
 #   bash parent/bench.sh local     直接测 parent 上的 instance store（Sandbox 不要开着）
-#   bash parent/bench.sh sandbox   测 Sandbox 里的 /dev/vdb（就是同一块 instance store）
+#   bash parent/bench.sh sandbox   测 Sandbox 里的 /dev/vdb（同一块 instance store 上 XFS 里的一个文件）
 # 结果：$WORK/results/&lt;local|sandbox&gt;/*.json
 set -euo pipefail
 source &quot;$(dirname &quot;$0&quot;)/../config.sh&quot;
@@ -531,7 +529,9 @@ OUT=$WORK/results/$MODE; mkdir -p &quot;$OUT&quot;
 SB=&quot;ssh -n -i $WORK/id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@172.16.0.2&quot;
 case $MODE in
   local)   DEV=$ISD;     X() { sudo &quot;$@&quot;; }
-           pgrep -x firecracker &gt;/dev/null &amp;&amp; { echo &quot;先停掉 Sandbox：sudo pkill -x firecracker&quot;; exit 1; } ;;
+           pgrep -x firecracker &gt;/dev/null &amp;&amp; { echo &quot;先停掉 Sandbox：sudo pkill -x firecracker&quot;; exit 1; }
+           # 直测裸盘会清掉盘上的 XFS；之后 start-sandbox.sh 会重新格式化
+           mountpoint -q /mnt/instance-store &amp;&amp; sudo umount /mnt/instance-store ;;
   sandbox) DEV=/dev/vdb; X() { $SB &quot;$(printf &#x27;%q &#x27; &quot;$@&quot;)&quot;; } ;;
   *) echo &quot;用法: bash parent/bench.sh local|sandbox&quot;; exit 1 ;;
 esac
@@ -554,28 +554,30 @@ X mkdir -p /mnt/bench; X mount $DEV /mnt/bench
 run 6-bigfile-64g     --filename=/mnt/bench/big.dat --rw=write --bs=1M --iodepth=32 --size=64G --end_fsync=1
 X umount /mnt/bench
 echo &quot;$(date +%T) $MODE: 完成 → $OUT&quot;</code></pre></details></div>
-    <div class="out"><div class="out-h">预期输出</div><pre>06:11:30 local: 1-seqwrite-64g
-06:12:10 local: 2-randread-4k
-06:12:46 local: 3-randread-4k-qd1
-06:13:22 local: 4-randwrite-4k
-06:13:57 local: 5-seqread-1m
-06:14:33 local: 6-bigfile-64g
-06:15:14 local: 完成 → /home/ec2-user/bench/results/local</pre></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>10:02:45 local: 1-seqwrite-64g
+10:03:25 local: 2-randread-4k
+10:04:01 local: 3-randread-4k-qd1
+10:04:36 local: 4-randwrite-4k
+10:05:12 local: 5-seqread-1m
+10:05:48 local: 6-bigfile-64g
+10:06:29 local: 完成 → /home/ec2-user/bench/results/local</pre></div>
   </div>
 </li>
 <li class="step" id="s-start">
   <div class="step-n" aria-hidden="true">9</div>
   <div class="step-b">
-    <h3>启动 Sandbox，把整块 instance store 交给它 <span class="where where-p">在 parent 上</span></h3>
-    <p>confidential 模式（非 debug），4 个独占 vCPU，4 GiB 内存。数据盘的两个关键配置：io_engine 设成 Async，cache_type 设成 Writeback（让 Sandbox 里的 fsync 真正落盘）。</p>
+    <h3>启动 Sandbox，数据盘是 instance store 上 XFS 里的文件 <span class="where where-p">在 parent 上</span></h3>
+    <p>data-disk.sh 把 instance store 格式化成 XFS（第一次）、挂到 /mnt/instance-store，预分配一个大文件给 Sandbox 当数据盘。不要把裸盘直接交给 Sandbox：parent 回写裸块设备的缓存时会拆成约 3 KiB 的小请求，写入只有直测的 1/4（见 A 的结果）。Sandbox 是 confidential 模式（非 debug），4 个独占 vCPU，4 GiB 内存；数据盘 io_engine 设成 Async，cache_type 设成 Writeback（让 Sandbox 里的 fsync 真正落盘）。</p>
     <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/start-sandbox.sh</code></pre></div>
-    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/start-sandbox.sh">parent/start-sandbox.sh</a>（34 行）</summary><pre><code>#!/usr/bin/env bash
-# 【parent】tap0（parent 经它 SSH 进 Sandbox），写配置，启动 Sandbox，把整块 instance store 交给它
+    <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/start-sandbox.sh">parent/start-sandbox.sh</a>（36 行）</summary><pre><code>#!/usr/bin/env bash
+# 【parent】准备数据盘（instance store 上的 XFS 文件）和 tap0，写配置，启动 Sandbox
 set -euo pipefail
-source &quot;$(dirname &quot;$0&quot;)/../config.sh&quot;
+HERE=$(cd &quot;$(dirname &quot;$0&quot;)&quot; &amp;&amp; pwd)                  # 下面会 cd 到 $WORK，先记下脚本目录
+source &quot;$HERE/../config.sh&quot;
 cd &quot;$WORK&quot; &amp;&amp; source &quot;$WORK/env&quot;
 # Firecracker 写盘走 parent 的 page cache；dirty 门槛没改成固定值的话写入会被卡在 ~400 MB/s（见 setup.sh）
 [ &quot;$(sysctl -n vm.dirty_bytes)&quot; -gt 0 ] || { echo &quot;vm.dirty_bytes 还是 0：先执行 parent/setup.sh（或者 sudo sysctl -p /etc/sysctl.d/90-nitro-sandbox.conf）&quot;; exit 1; }
+bash &quot;$HERE/data-disk.sh&quot; &amp;&amp; source &quot;$WORK/data.env&quot;     # 数据盘用 XFS 上的文件，不用裸盘（原因见 data-disk.sh）
 ip link show tap0 &gt;/dev/null 2&gt;&amp;1 || sudo ip tuntap add dev tap0 mode tap
 sudo ip addr replace 172.16.0.1/30 dev tap0 &amp;&amp; sudo ip link set tap0 up
 
@@ -589,7 +591,7 @@ cat &gt; vm.json &lt;&lt;JSON
   &quot;machine-config&quot;: { &quot;vcpu_count&quot;: 4, &quot;mem_size_mib&quot;: 4096 },
   &quot;drives&quot;: [
     { &quot;drive_id&quot;: &quot;rootfs&quot;, &quot;path_on_host&quot;: &quot;$WORK/rootfs.ext4&quot;, &quot;is_root_device&quot;: true, &quot;is_read_only&quot;: false },
-    { &quot;drive_id&quot;: &quot;data&quot;, &quot;path_on_host&quot;: &quot;$ISD&quot;, &quot;is_root_device&quot;: false, &quot;is_read_only&quot;: false,
+    { &quot;drive_id&quot;: &quot;data&quot;, &quot;path_on_host&quot;: &quot;$DATA_IMG&quot;, &quot;is_root_device&quot;: false, &quot;is_read_only&quot;: false,
       &quot;io_engine&quot;: &quot;Async&quot;, &quot;cache_type&quot;: &quot;Writeback&quot; }
   ],
   &quot;network-interfaces&quot;: [ { &quot;iface_id&quot;: &quot;eth0&quot;, &quot;guest_mac&quot;: &quot;06:00:AC:10:00:02&quot;, &quot;host_dev_name&quot;: &quot;tap0&quot; } ],
@@ -602,37 +604,53 @@ sudo setsid nohup firecracker --api-sock /tmp/fc.sock --config-file vm.json &gt;
 SB=(ssh -n -i &quot;$WORK/id_rsa&quot; -o ConnectTimeout=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@172.16.0.2)
 for i in $(seq 1 60); do &quot;${SB[@]}&quot; true 2&gt;/dev/null &amp;&amp; break; sleep 2; done
 grep -E &quot;Attaching enclave block|debug=&quot; fc.log | sed &#x27;s/.*main\] //&#x27;
-&quot;${SB[@]}&quot; &#x27;echo &quot;vCPU: $(nproc)&quot;; lsblk -d -o NAME,SIZE /dev/vdb; ls -la /dev/nsm&#x27;</code></pre></details></div>
-    <div class="out"><div class="out-h">预期输出</div><pre>Attaching enclave block device id=rootfs
+&quot;${SB[@]}&quot; &#x27;echo &quot;vCPU: $(nproc)&quot;; lsblk -d -o NAME,SIZE /dev/vdb; ls -la /dev/nsm&#x27;</code></pre></details><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/data-disk.sh">parent/data-disk.sh</a>（16 行）</summary><pre><code>#!/usr/bin/env bash
+# 【parent】把 instance store 格式化成 XFS、挂到 /mnt/instance-store，在上面预分配一个大文件给 Sandbox 当数据盘。可以重复执行。
+# 为什么不把裸盘直接交给 Sandbox：Firecracker 不用 O_DIRECT，写入走 parent 的 page cache。裸块设备的 page cache 回写会拆成
+# 平均 ~3 KiB 的小请求，被盘的写 IOPS 上限卡住（i7i.2xlarge 上只有 ~425 MB/s）；XFS 文件的回写是 128 KiB 的请求，Sandbox 写入接近直测。
+set -euo pipefail
+source &quot;$(dirname &quot;$0&quot;)/../config.sh&quot;
+source &quot;$WORK/env&quot;
+MNT=/mnt/instance-store; IMG=$MNT/sandbox-data.img
+if ! mountpoint -q $MNT; then
+  sudo mkdir -p $MNT
+  [ &quot;$(sudo blkid -o value -s TYPE &quot;$ISD&quot; 2&gt;/dev/null)&quot; = xfs ] || sudo mkfs.xfs -q -f &quot;$ISD&quot;   # 盘上不是 XFS 就格式化（数据会清空）
+  sudo mount -o noatime &quot;$ISD&quot; $MNT
+fi
+[ -f $IMG ] || sudo fallocate -l $(( $(df -B1 --output=avail $MNT | tail -1) * 95 / 100 )) $IMG
+echo &quot;DATA_IMG=$IMG&quot; &gt; &quot;$WORK/data.env&quot;
+echo &quot;数据盘文件：$IMG（$(du -h --apparent-size $IMG | cut -f1)，在 $(findmnt -no SOURCE,FSTYPE $MNT | tr &#x27;\n&#x27; &#x27; &#x27;)上）&quot;</code></pre></details></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>数据盘文件：/mnt/instance-store/sandbox-data.img（1.7T，在 /dev/nvme1n1 xfs 上）
+Attaching enclave block device id=rootfs
 Attaching enclave block device id=data
 Starting enclave with start_flags=0x0 (debug=false)
 vCPU: 4
 NAME  SIZE
-vdb   1.7T
-crw-rw-rw- 1 root root 10, 258 Nov 17 06:15 /dev/nsm</pre></div>
+vdb   1.6T
+crw-rw-rw- 1 root root 10, 258 Nov 17 10:06 /dev/nsm</pre></div>
   </div>
 </li>
 <li class="step" id="s-sandbox">
   <div class="step-n" aria-hidden="true">10</div>
   <div class="step-b">
     <h3>测 Sandbox <span class="where where-p">在 parent 上</span></h3>
-    <p>同一块盘、同样的 fio 参数，这次在 Sandbox 里对 /dev/vdb 跑。大约 8 分钟（写入慢，见结果）。</p>
+    <p>同一块盘、同样的 fio 参数，这次在 Sandbox 里对 /dev/vdb 跑。大约 5 分钟。</p>
     <div class="code"><button class="copy" type="button">复制</button><pre><code>bash parent/bench.sh sandbox</code></pre></div>
     
-    <div class="out"><div class="out-h">预期输出</div><pre>06:15:20 sandbox: 1-seqwrite-64g
-06:18:05 sandbox: 2-randread-4k
-06:18:42 sandbox: 3-randread-4k-qd1
-06:19:18 sandbox: 4-randwrite-4k
-06:20:02 sandbox: 5-seqread-1m
-06:20:43 sandbox: 6-bigfile-64g
-06:23:26 sandbox: 完成 → /home/ec2-user/bench/results/sandbox</pre></div>
+    <div class="out"><div class="out-h">预期输出</div><pre>10:06:39 sandbox: 1-seqwrite-64g
+10:07:20 sandbox: 2-randread-4k
+10:07:59 sandbox: 3-randread-4k-qd1
+10:08:35 sandbox: 4-randwrite-4k
+10:09:15 sandbox: 5-seqread-1m
+10:09:55 sandbox: 6-bigfile-64g
+10:10:35 sandbox: 完成 → /home/ec2-user/bench/results/sandbox</pre></div>
   </div>
 </li>
 <li class="step" id="s-compare">
   <div class="step-n" aria-hidden="true">11</div>
   <div class="step-b">
     <h3>对比结果 <span class="where where-p">在 parent 上</span></h3>
-    <p>i7i.2xlarge 上：读应该在 parent 直测的 80～100%，4K 随机写和直测差不多，大块写和大文件写约 425 MB/s（直测的 25% 左右，原因见 A 的结果）。</p>
+    <p>i7i.2xlarge 上：顺序读写和 4K 随机写应该和直测差不多（95～101%），4K 随机读在 80% 左右。</p>
     <div class="code"><button class="copy" type="button">复制</button><pre><code>python3 parent/compare.py</code></pre></div>
     <div class="srcs"><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/compare.py">parent/compare.py</a>（29 行）</summary><pre><code>#!/usr/bin/env python3
 &quot;&quot;&quot;【parent】对比 parent 直测和 Sandbox：python3 parent/compare.py（读 $WORK/results，默认 ~/bench/results）&quot;&quot;&quot;
@@ -664,12 +682,12 @@ for name, label, unit in TESTS:
     else:
         print(f&quot;{label:&lt;40}{f&#x27;{a:,.0f} {unit}&#x27;:&gt;22}{f&#x27;{b:,.0f} {unit}&#x27;:&gt;18}{f&#x27;{100 * b / a:.0f}%&#x27;:&gt;14}&quot;)</code></pre></details></div>
     <div class="out"><div class="out-h">预期输出</div><pre>测试                                                 parent 直测         Sandbox    Sandbox/直测
-大块顺序写 64 GiB（裸设备，1M QD32，含 fsync）                   1,737 MB/s          425 MB/s           24%
-大文件写入 64 GiB（ext4 文件，1M QD32，含 fsync）               1,705 MB/s          425 MB/s           25%
-顺序读（1M QD32）                                        2,134 MB/s        2,141 MB/s          100%
-4K 随机读（QD32×4）                                    300,470 IOPS      239,039 IOPS           80%
-4K 随机写（QD32×4，含 fsync）                            165,119 IOPS      169,480 IOPS          103%
-4K 随机读延迟（QD1，平均 / p99）                              74 / 84 µs       96 / 115 µs        +22 µs</pre></div>
+大块顺序写 64 GiB（裸设备，1M QD32，含 fsync）                   1,719 MB/s        1,713 MB/s          100%
+大文件写入 64 GiB（ext4 文件，1M QD32，含 fsync）               1,706 MB/s        1,719 MB/s          101%
+顺序读（1M QD32）                                        2,134 MB/s        2,142 MB/s          100%
+4K 随机读（QD32×4）                                    300,467 IOPS      244,562 IOPS           81%
+4K 随机写（QD32×4，含 fsync）                            165,119 IOPS      164,877 IOPS          100%
+4K 随机读延迟（QD1，平均 / p99）                              74 / 84 µs       98 / 119 µs        +23 µs</pre></div>
   </div>
 </li>
 <li class="step" id="s-sync">
@@ -697,28 +715,28 @@ for t in &quot;2-randread-4k --rw=randread --bs=4k --iodepth=32 --numjobs=4&quot
   python3 -c &quot;import json,sys; r=json.load(open(sys.argv[1]))[&#x27;jobs&#x27;][0][&#x27;read&#x27;]; print(sys.argv[2], f&#x27;{r[\&quot;iops\&quot;]:,.0f} IOPS&#x27;, f&#x27;{r[\&quot;io_bytes\&quot;]/1e6/(r[\&quot;runtime\&quot;]/1000):,.0f} MB/s&#x27;)&quot; results/sandbox-sync/$1.json $1
 done</code></pre></details></div>
     <div class="out"><div class="out-h">预期输出</div><pre>0
-2-randread-4k 12,840 IOPS 53 MB/s
-5-seqread-1m 608 IOPS 639 MB/s</pre></div>
+2-randread-4k 12,737 IOPS 52 MB/s
+5-seqread-1m 853 IOPS 896 MB/s</pre></div>
   </div>
 </li>
       </ol>
     </section>
 
     <section id="a-results">
-      <h2>A 的结果：读和直测几乎一样，写入取决于机型</h2>
+      <h2>A 的结果：顺序读写和直测基本一样</h2>
       <figure class="path">
         <svg viewBox="0 0 1000 300" role="img" aria-labelledby="pathTitle pathDesc">
           <title id="pathTitle">两条 I/O 路径</title>
           <desc id="pathDesc">parent 直测时，fio 用 O_DIRECT 直接读写 NVMe。Sandbox 里的 fio 要依次经过 virtio-blk、DMB 共享缓冲区、parent 上的 Firecracker 和 parent 的 page cache，才到同一块 NVMe。</desc>
           <g id="pathArt"></g>
         </svg>
-        <figcaption>两条路径终点是同一块盘。Sandbox 的每次读写都要先交给 parent 上的 Firecracker 进程处理。Firecracker 打开盘时不用 O_DIRECT，写入先进 parent 的 page cache，再由 parent 内核回写到盘：回写能多快，Sandbox 就能写多快。</figcaption>
+        <figcaption>两条路径终点是同一块盘。Sandbox 的每次读写都要先交给 parent 上的 Firecracker 进程处理。Firecracker 打开数据盘时不用 O_DIRECT，写入先进 parent 的 page cache，再由 parent 内核回写；数据盘用 XFS 上的文件，回写就是 128 KiB 的请求，和直测一样快。</figcaption>
       </figure>
       <div class="tiles" aria-label="Sandbox 相对 parent 直测">
-<div class="tile"><div class="tile-l">4K 随机读</div><div class="tile-v">80%</div><div class="tile-s">239,039 对 300,470 IOPS</div></div>
-<div class="tile"><div class="tile-l">顺序读</div><div class="tile-v">100%</div><div class="tile-s">2,141 对 2,134 MB/s</div></div>
-<div class="tile"><div class="tile-l">大文件写入</div><div class="tile-v">25%</div><div class="tile-s">425 对 1,705 MB/s</div></div>
-<div class="tile"><div class="tile-l">读延迟（QD1）</div><div class="tile-v">+22 µs</div><div class="tile-s">平均 96 对 74 µs</div></div>
+<div class="tile"><div class="tile-l">4K 随机读</div><div class="tile-v">81%</div><div class="tile-s">244,562 对 300,467 IOPS</div></div>
+<div class="tile"><div class="tile-l">顺序读</div><div class="tile-v">100%</div><div class="tile-s">2,142 对 2,134 MB/s</div></div>
+<div class="tile"><div class="tile-l">大文件写入</div><div class="tile-v">101%</div><div class="tile-s">1,719 对 1,706 MB/s</div></div>
+<div class="tile"><div class="tile-l">读延迟（QD1）</div><div class="tile-v">+23 µs</div><div class="tile-s">平均 98 对 74 µs</div></div>
       </div>
       <h3 class="sub">i7i.2xlarge 的每一项</h3>
       <p class="prose">下面是按本手册步骤在 i7i.2xlarge 上的实测。每张图有自己的刻度，条越长越好；延迟那张条越短越好。悬停或用 Tab 键聚焦到条上可以看具体数字。</p>
@@ -726,27 +744,28 @@ done</code></pre></details></div>
       <div class="charts" id="charts"></div>
       <div class="tools"><button class="tbtn" type="button" data-table="resultsTable">用表格查看</button></div>
       <div class="tablewrap" id="resultsTable" hidden></div>
-      <p class="note">另一轮是在另一台 i7i.2xlarge 上用同样的步骤测的。早先在第三台 i7i.2xlarge 上（dirty 还没改成固定值）测的写入也是 24～25%。两台机器相比，Sandbox/直测：4K 随机读 80～92%，4K 随机写 102～103%，顺序读 100%，大块顺序写 24～25%，大文件写入 25%。</p>
+      <p class="note">上面是按本手册步骤的一次完整运行。另外单独复测过：数据盘用 XFS 文件时 Sandbox 顺序写 i7i.2xlarge 1,701 MB/s、i7i.8xlarge 3,529 MB/s，和这里的结果一致。</p>
 
       <h3 class="sub" id="engine">io_engine 一定要写 Async</h3>
       <p class="prose">Firecracker 块设备默认用 Sync 引擎，一次只处理一个请求，队列深度再大也没用。第 12 步实测：同样的盘、同样的 fio，Sync 下 4K 随机读只有 Async 的 1/19。</p>
       <div class="legend" aria-hidden="true"><span><i style="background:var(--sandbox)"></i>Sandbox，Async</span><span><i style="background:var(--sync)"></i>Sandbox，Sync（默认）</span></div>
       <div class="charts" id="engineCharts"></div>
 
-      <h3 class="sub" id="why2x">为什么 i7i.2xlarge 上写入只有约 425 MB/s</h3>
-      <p class="prose">瓶颈在 parent 内核的缓存回写，不在 Sandbox：Sandbox 关掉、parent 自己用带缓存的方式写同一块盘，速度也一样。CPU 很闲，dirty 门槛和写回限流（blk-wbt）都不影响。实测回写时同时在路上的数据只有 1～2 MB，盘的并发几乎没用上（O_DIRECT 队列深度 32 时同一块盘能写 1.7 GB/s）。</p>
-<div class="tablewrap"><table><thead><tr><th>i7i.2xlarge，顺序写 64 GiB（1 MiB 块，含 fsync）</th><th class="n">MB/s</th></tr></thead><tbody><tr><td>parent 直测（O_DIRECT）</td><td class="n">1,737</td></tr><tr><td>parent 带缓存写同一块盘（Sandbox 关着，dirty 固定）</td><td class="n">424</td></tr><tr><td>同上，再关掉写回限流（wbt_lat_usec=0）</td><td class="n">425</td></tr><tr><td>Sandbox，4 vCPU</td><td class="n">425</td></tr><tr><td>Sandbox，2 vCPU（parent 多一个物理核）</td><td class="n">425</td></tr><tr><td>Sandbox，dirty 默认（同一次开机交替测两次）</td><td class="n">419 / 421</td></tr><tr><td>Sandbox，dirty 固定（同上）</td><td class="n">425 / 425</td></tr><tr><td>Sandbox，关掉写回限流</td><td class="n">425</td></tr></tbody></table></div>
+      <h3 class="sub" id="whyfile">数据盘为什么要用 XFS 上的文件，不能用裸盘</h3>
+      <p class="prose">Firecracker 打开数据盘时不用 O_DIRECT，Sandbox 的写入先进 parent 的 page cache，再由 parent 内核回写。回写裸块设备时请求被拆得很小（平均 3～9 KiB），被盘的写 IOPS 上限卡住；回写 XFS 上的文件是 128 KiB 的请求，和 O_DIRECT 一样快。早先版本把裸盘直接交给 Sandbox，测出来的"写入只有直测的 25%"就是这个原因。</p>
+<div class="tablewrap"><table><thead><tr><th>机型</th><th>顺序写 64 GiB（1 MiB 块，含 fsync）</th><th class="n">写入 MB/s</th><th class="n">盘上写请求/秒</th><th class="n">平均每个请求</th></tr></thead><tbody><tr><td>i7i.2xlarge</td><td>裸盘 O_DIRECT（QD32）</td><td class="n">1,733</td><td class="n">13,003</td><td class="n">128 KiB</td></tr><tr><td>i7i.2xlarge</td><td>裸盘 带缓存写</td><td class="n">425</td><td class="n">163,214</td><td class="n">3 KiB</td></tr><tr><td>i7i.2xlarge</td><td>XFS 文件 带缓存写</td><td class="n">1,709</td><td class="n">12,841</td><td class="n">128 KiB</td></tr><tr><td>i7i.2xlarge</td><td>Sandbox，数据盘是 XFS 上的文件</td><td class="n">1,701</td><td class="n">12,647</td><td class="n">128 KiB</td></tr><tr><td>i7i.8xlarge</td><td>裸盘 O_DIRECT（QD32）</td><td class="n">3,622</td><td class="n">26,597</td><td class="n">128 KiB</td></tr><tr><td>i7i.8xlarge</td><td>裸盘 带缓存写</td><td class="n">1,927</td><td class="n">197,362</td><td class="n">9 KiB</td></tr><tr><td>i7i.8xlarge</td><td>XFS 文件 带缓存写</td><td class="n">3,539</td><td class="n">26,057</td><td class="n">128 KiB</td></tr><tr><td>i7i.8xlarge</td><td>Sandbox，数据盘是 XFS 上的文件</td><td class="n">3,529</td><td class="n">25,375</td><td class="n">128 KiB</td></tr></tbody></table></div><p class="note">用裸盘时还排除过这些因素（i7i.2xlarge，Sandbox 顺序写）：dirty 默认 419 / 421、dirty 固定 425 / 425、关掉写回限流 425、Sandbox 只给 2 vCPU 425 MB/s，parent 的 CPU 一直很闲。盘上请求数是测试期间 /sys/block/&lt;盘&gt;/stat 的增量。</p>
 
-      <h3 class="sub" id="large">换大机型、多盘 RAID 0（i7i.8xlarge 实测）</h3>
-      <p class="prose">i7i.8xlarge 有两块 3750 GB NVMe。同样走缓存回写，这台机型上快得多：parent 自己带缓存写单盘能到 2,033 MB/s。两点要注意：parent 的 dirty 门槛必须改成固定值（setup.sh 已经设了 <code>vm.dirty_bytes=2G</code>、<code>vm.dirty_background_bytes=512M</code>），否则 Sandbox 写入只有约 500 MB/s，多线程写还会把 parent 卡死；RAID 0 要在 Sandbox 里做（每块 NVMe 各给一块 virtio 盘），在 parent 上做好再当一块盘给 Sandbox 没有用。</p>
-<div class="tablewrap"><table><thead><tr><th>i7i.8xlarge</th><th class="n">顺序写</th><th class="n">顺序读</th><th class="n">4K 随机读</th><th class="n">4K 随机写</th></tr></thead><tbody><tr><td>parent 直测：单盘</td><td class="n">3,654</td><td class="n">4,267</td><td class="n">594,865</td><td class="n">330,677</td></tr><tr><td>parent 直测：两盘 RAID 0</td><td class="n">7,572</td><td class="n">8,533</td><td class="n">950,264</td><td class="n">661,273</td></tr><tr><td>Sandbox：单盘，dirty 默认</td><td class="n">491 / 555</td><td class="n">–</td><td class="n">–</td><td class="n">216,062</td></tr><tr><td>Sandbox：单盘，dirty 固定</td><td class="n">2,042</td><td class="n">3,762</td><td class="n">273,938</td><td class="n">306,305</td></tr><tr><td>Sandbox：两块盘，在 Sandbox 里 RAID 0</td><td class="n">4,068</td><td class="n">4,422</td><td class="n">341,875</td><td class="n">369,889</td></tr><tr><td>Sandbox：parent 上 RAID 0 再当一块盘</td><td class="n">1,874</td><td class="n">1,008</td><td class="n">228,756</td><td class="n">350,826</td></tr></tbody></table></div><p class="note">单位：MB/s、IOPS。Sandbox 4 vCPU，测法和 A 部分一样（fio direct=1，64 GiB 测试区，写入含 fsync）；这组不在 workshop 步骤里。单盘、dirty 固定为 2G 时顺序写测了三次：1,876～2,042 MB/s。dirty 固定为 256M～8G 之间几种取值，单盘顺序写都在 1,918～2,062 MB/s；再关掉写回限流（wbt_lat_usec=0）能从 1,876 到 2,306 MB/s。parent 自己带缓存写：dirty 默认 370、固定 2,033 MB/s。</p>
+      <h3 class="sub" id="large">i7i.8xlarge、多盘 RAID 0</h3>
+      <p class="prose">数据盘同样用 XFS 文件：单盘 Sandbox 顺序写是直测的 99%（3,592 MB/s）。两块盘各放一个文件、在 Sandbox 里组 RAID 0，顺序写 7,528 MB/s，和 parent 直测两盘 RAID 0（7,572）几乎一样。随机读是例外：每个 Sandbox 的 4K 随机读只有 25～31 万 IOPS，大机型上明显低于直测（单盘直测 593,778）。</p>
+<div class="tablewrap"><table><thead><tr><th>i7i.8xlarge</th><th class="n">顺序写</th><th class="n">顺序读</th><th class="n">4K 随机读</th><th class="n">4K 随机写</th></tr></thead><tbody><tr><td>parent 直测：单盘</td><td class="n">3,612</td><td class="n">3,640</td><td class="n">593,778</td><td class="n">330,676</td></tr><tr><td>Sandbox：单盘（XFS 文件）</td><td class="n">3,592</td><td class="n">4,098</td><td class="n">251,338</td><td class="n">302,195</td></tr><tr><td>parent 直测：两盘 RAID 0</td><td class="n">7,572</td><td class="n">8,533</td><td class="n">950,264</td><td class="n">661,273</td></tr><tr><td>Sandbox：两块盘各一个 XFS 文件，Sandbox 里 RAID 0</td><td class="n">7,528</td><td class="n">5,087</td><td class="n">310,818</td><td class="n">377,713</td></tr></tbody></table></div><p class="note">单位：MB/s、IOPS。Sandbox 4 vCPU，fio 参数和 A 部分一样（direct=1，64 GiB 测试区，写入含 fsync）；单盘两行来自按本手册步骤的一次完整运行，RAID 0 两行不在 workshop 步骤里。单盘大文件写入：直测 3,631、Sandbox 3,558 MB/s。单盘直测顺序读波动较大（另一次测试是 4,267 MB/s），所以这一行 Sandbox 比直测高不代表读得更快。早先把裸盘直接交给 Sandbox 时：单盘顺序写 dirty 默认 491 / 555、dirty 固定 1,876～2,042 MB/s；在 parent 上做 RAID 0 再当一块盘给 Sandbox，顺序读只有 1,008 MB/s，不要这么做。</p>
 
       <h3 class="sub">怎么看</h3>
       <ul class="prose">
-        <li><strong>读几乎不受影响。</strong>i7i.2xlarge 上顺序读是直测的 100%，4K 随机读是 80%。代价在延迟：每次读多 22 µs（经过 virtio、DMB 和 Firecracker 用户态），p99 从 84 µs 变成 115 µs。每个 Sandbox 的 4K 随机读大约在 24～34 万 IOPS，大机型上加盘、加 vCPU 也突破不了。</li>
-        <li><strong>大块写和大文件写取决于 parent 的缓存回写。</strong>i7i.2xlarge 上约 425 MB/s（直测的 25%）；i7i.8xlarge 上单盘约 1,876～2,042 MB/s，两块盘在 Sandbox 里 RAID 0 约 4,068 MB/s。要写得快就选大机型、多块盘。</li>
-        <li><strong>4K 随机写和直测差不多</strong>（103%，含最后的 fsync）：Sandbox 的写先进 parent 的 page cache，内核回写时会把相邻的 4K 合并，抵消了一部分开销。</li>
-        <li><strong>parent 能读到 Sandbox 写进盘的明文</strong>（数据路径经过 parent）。需要保密就在 Sandbox 里用 dm-crypt 加密，i7i.2xlarge 上实测对读写速度几乎没有影响；要防篡改可以再加 dm-integrity，它会明显降低写入速度，本手册没有测。</li>
+        <li><strong>顺序读写和直测基本一样。</strong>数据盘用 XFS 文件时，i7i.2xlarge 上大块顺序写是直测的 100%，大文件写入 101%，顺序读 100%；i7i.8xlarge 上顺序写 99%，两盘 RAID 0 能写 7,528 MB/s。</li>
+        <li><strong>4K 随机写也接近直测</strong>（i7i.2xlarge 上 100%，含最后的 fsync）。</li>
+        <li><strong>4K 随机读有上限。</strong>i7i.2xlarge 上是直测的 81%；每个 Sandbox 大约 24～31 万 IOPS，大机型上（直测单盘 59 万）差距更明显。每次读多 23 µs 延迟（经过 virtio、DMB 和 Firecracker 用户态），p99 从 84 µs 变成 119 µs。</li>
+        <li><strong>不要把裸盘直接交给 Sandbox</strong>，也不要在 parent 上做 RAID 0 再当一块盘给它；多块盘就每块各放一个 XFS 文件，在 Sandbox 里组 RAID 0。</li>
+        <li><strong>parent 能读到 Sandbox 写进盘的明文</strong>（数据路径经过 parent）。需要保密就在 Sandbox 里用 dm-crypt 加密，要防篡改再加 dm-integrity；本手册没有在 XFS 文件这种用法下测它们对性能的影响。</li>
       </ul>
     </section>
 
@@ -802,7 +821,7 @@ sudo iptables -t nat -C POSTROUTING -s 172.16.0.0/30 -o $HOST_IF -j MASQUERADE 2
 sudo iptables -C FORWARD -i tap0 -o $HOST_IF -j ACCEPT 2&gt;/dev/null || sudo iptables -I FORWARD 1 -i tap0 -o $HOST_IF -j ACCEPT
 sudo iptables -C FORWARD -o tap0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2&gt;/dev/null || \
   sudo iptables -I FORWARD 1 -o tap0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-echo &quot;NAT OK（$HOST_IF）&quot;</code></pre></details><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/attest.sh">parent/attest.sh</a>（63 行）</summary><pre><code>#!/usr/bin/env bash
+echo &quot;NAT OK（$HOST_IF）&quot;</code></pre></details><details class="src"><summary>脚本内容：<a href="https://github.com/sunchaoqun/nitro-sandbox/blob/main/parent/attest.sh">parent/attest.sh</a>（65 行）</summary><pre><code>#!/usr/bin/env bash
 # 【parent】attestation / ETH 测试的统一入口。Sandbox 里的命令经 ssh 执行，parent 自己的命令用的是同一个实例角色。
 #   bash parent/attest.sh restart normal|changed|debug  用原配置 / cmdline 多一个 quiet（PCR0 会变）/ debug 模式重启 Sandbox
 #   bash parent/attest.sh probe                         NSM 探针：打印 PCR，调 KMS GenerateRandom(Recipient)
@@ -812,7 +831,8 @@ echo &quot;NAT OK（$HOST_IF）&quot;</code></pre></details><details class="src"
 #   bash parent/attest.sh eth-send | eth-receipt &lt;交易哈希&gt;   签名并广播到 Sepolia（地址里要有测试币）/ 查是否上链
 #   bash parent/attest.sh stop                          停掉 Sandbox
 set -uo pipefail
-source &quot;$(dirname &quot;$0&quot;)/../config.sh&quot;
+HERE=$(cd &quot;$(dirname &quot;$0&quot;)&quot; &amp;&amp; pwd)                  # 下面会 cd 到 $WORK，先记下脚本目录
+source &quot;$HERE/../config.sh&quot;
 cd &quot;$WORK&quot; &amp;&amp; source &quot;$WORK/env&quot;
 TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H &quot;X-aws-ec2-metadata-token-ttl-seconds: 60&quot;)
 REGION=$(curl -s -H &quot;X-aws-ec2-metadata-token: $TOKEN&quot; http://169.254.169.254/latest/meta-data/placement/region)
@@ -831,6 +851,7 @@ case &quot;${1:-}&quot; in
       *) echo &quot;用法: bash parent/attest.sh restart normal|changed|debug&quot;; exit 1 ;;
     esac
     &quot;${SB[@]}&quot; poweroff 2&gt;/dev/null
+    bash &quot;$HERE/data-disk.sh&quot; &gt;/dev/null          # 数据盘文件（parent 重启后要重新挂载）
     for i in $(seq 1 20); do pgrep -x firecracker &gt;/dev/null || break; sleep 1; done
     sudo pkill -x firecracker; sudo rm -f /tmp/fc.sock
     sudo setsid nohup firecracker --api-sock /tmp/fc.sock --config-file vm-run.json &gt; fc.log 2&gt;&amp;1 &lt; /dev/null &amp;
@@ -1727,8 +1748,8 @@ echo &quot;清理完成&quot;</code></pre></details></div>
           <thead><tr><th>现象</th><th>原因</th><th>怎么办</th></tr></thead>
           <tbody>
 <tr><td>Firecracker 报 <code>No space left on device (os error 28)</code></td><td>没预留内存池</td><td>做第 5 步（会重启）</td></tr>
-<tr><td>大机型上 Sandbox 写入只有约 500 MB/s，多线程写甚至让 parent 卡死（SSH 都连不上）</td><td>内存池很大时，按比例算的 dirty 门槛把内存池的空闲内存也算进去，但块设备的 page cache 用不了内存池，dirty 页占满剩下的内存</td><td>第 5 步已经把 dirty 改成固定值（<code>vm.dirty_bytes=2G</code> / <code>vm.dirty_background_bytes=512M</code>）</td></tr>
-<tr><td>i7i.2xlarge 上 Sandbox 写入只有约 425 MB/s</td><td>parent 内核缓存回写的上限：parent 自己带缓存写同一块盘也一样，跟 Sandbox 无关</td><td>要写得快就换大机型（i7i.8xlarge 单盘约 2 GB/s），多块盘在 Sandbox 里组 RAID 0</td></tr>
+<tr><td>Sandbox 写入只有直测的 25% 左右（i7i.2xlarge 约 425 MB/s）</td><td>把裸盘直接交给了 Sandbox：parent 回写裸块设备的缓存时拆成约 3 KiB 的小请求，被盘的写 IOPS 上限卡住（parent 自己这样写也一样慢）</td><td>数据盘用 XFS 上的文件（第 9 步的 start-sandbox.sh / data-disk.sh 已经这样做）</td></tr>
+<tr><td>大机型上大量写入时 parent 卡死（SSH 都连不上）</td><td>内存池很大时，按比例算的 dirty 门槛把内存池的空闲内存也算进去，但 page cache 用不了内存池，dirty 页占满剩下的内存</td><td>第 5 步已经把 dirty 改成固定值（<code>vm.dirty_bytes=2G</code> / <code>vm.dirty_background_bytes=512M</code>）</td></tr>
 <tr><td>Sandbox 里 4K 随机读只有 1～4 万 IOPS</td><td>数据盘没写 io_engine，默认是 Sync，一次只处理一个请求</td><td>用 parent/start-sandbox.sh 生成的配置（<code>"io_engine": "Async"</code>）</td></tr>
 <tr><td>Sandbox 里看到的 vdb 只有 30G</td><td>NVMe 编号重启后变了，拿到的是 EBS 根盘</td><td>用 <code>/dev/disk/by-id/…Instance_Storage_…</code>（第 6 步）</td></tr>
 <tr><td>读的数字比预期高很多</td><td>读到了没写过的区域（SSD 不读闪存直接返回），或者 parent 的 page cache 太大</td><td>bench.sh 第一项就是写满测试区；内存池按 config.sh 留 48G，每项前清 cache</td></tr>
@@ -1753,7 +1774,7 @@ echo &quot;清理完成&quot;</code></pre></details></div>
 <div class="tip" id="tip" role="status" aria-live="polite"></div>
 
 <script>
-const DATA = {"tests": [{"id": "6-bigfile-64g", "title": "大文件写入", "desc": "ext4 上写一个 64 GiB 文件，1 MiB 块，QD32，含最后的 fsync", "unit": "MB/s", "local": 1705, "sandbox": 425, "prevLocal": 1705, "prevSandbox": 425}, {"id": "1-seqwrite-64g", "title": "大块顺序写", "desc": "裸设备写 64 GiB，1 MiB 块，QD32，含 fsync", "unit": "MB/s", "local": 1737, "sandbox": 425, "prevLocal": 1707, "prevSandbox": 425}, {"id": "5-seqread-1m", "title": "顺序读", "desc": "1 MiB 块，QD32，30 秒", "unit": "MB/s", "local": 2134, "sandbox": 2141, "prevLocal": 2134, "prevSandbox": 2134}, {"id": "2-randread-4k", "title": "4K 随机读", "desc": "QD32 × 4 线程，30 秒", "unit": "IOPS", "local": 300470, "sandbox": 239039, "prevLocal": 300471, "prevSandbox": 276531}, {"id": "4-randwrite-4k", "title": "4K 随机写", "desc": "QD32 × 4 线程，30 秒，含最后的 fsync", "unit": "IOPS", "local": 165119, "sandbox": 169480, "prevLocal": 165121, "prevSandbox": 168102}, {"id": "3-randread-4k-qd1", "title": "4K 随机读延迟", "desc": "QD1，单线程，30 秒；条长是平均值", "unit": "µs", "local": [74, 84], "sandbox": [96, 115], "prevLocal": [73, 83], "prevSandbox": [99, 230]}], "sync": {"randread": 12840, "seqread": 639}};
+const DATA = {"tests": [{"id": "6-bigfile-64g", "title": "大文件写入", "desc": "ext4 上写一个 64 GiB 文件，1 MiB 块，QD32，含最后的 fsync", "unit": "MB/s", "local": 1706, "sandbox": 1719}, {"id": "1-seqwrite-64g", "title": "大块顺序写", "desc": "裸设备写 64 GiB，1 MiB 块，QD32，含 fsync", "unit": "MB/s", "local": 1719, "sandbox": 1713}, {"id": "5-seqread-1m", "title": "顺序读", "desc": "1 MiB 块，QD32，30 秒", "unit": "MB/s", "local": 2134, "sandbox": 2142}, {"id": "2-randread-4k", "title": "4K 随机读", "desc": "QD32 × 4 线程，30 秒", "unit": "IOPS", "local": 300467, "sandbox": 244562}, {"id": "4-randwrite-4k", "title": "4K 随机写", "desc": "QD32 × 4 线程，30 秒，含最后的 fsync", "unit": "IOPS", "local": 165119, "sandbox": 164877}, {"id": "3-randread-4k-qd1", "title": "4K 随机读延迟", "desc": "QD1，单线程，30 秒；条长是平均值", "unit": "µs", "local": [74, 84], "sandbox": [98, 119], "latAdd": 23}], "sync": {"randread": 12737, "seqread": 896}};
 const SVGNS = "http://www.w3.org/2000/svg";
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const el = (tag, attrs = {}, parent) => {
@@ -1813,7 +1834,7 @@ function renderPath() {
   box(622, 112, 150, 44, "parent page cache", "");
   line(697, 184, 697, 156, S);
   line(772, 134, 828, 134, S);
-  note(532, 282, "每次读写多 ~22 µs", "middle");
+  note(532, 282, "每次读写多 ~23 µs", "middle");
   note(697, 104, "写入先进 page cache，再由 parent 内核回写", "middle");
   // 共用的盘
   box(828, 34, 160, 222, "NVMe", "instance store");
@@ -1879,15 +1900,16 @@ function renderResults() {
   for (const t of DATA.tests) {
     const lat = t.unit === "µs";
     const lv = lat ? t.local[0] : t.local, sv = lat ? t.sandbox[0] : t.sandbox;
+    const add = t.latAdd ?? (sv - lv);
     const lab = (v, p99) => lat ? `平均 ${v} µs，p99 ${p99} µs` : `${fmt(v)} ${t.unit}`;
-    const ratio = lat ? `Sandbox 每次多 ${sv - lv} µs` : `Sandbox 是直测的 ${Math.round(100 * sv / lv)}%`;
+    const ratio = lat ? `Sandbox 每次多 ${add} µs` : `Sandbox 是直测的 ${Math.round(100 * sv / lv)}%`;
     smallChart(c, {
       title: t.title, desc: t.desc, ratioText: ratio, rightPad: lat ? 190 : 120,
       aria: `${t.title}：parent 直测 ${lab(lv, lat && t.local[1])}，Sandbox ${lab(sv, lat && t.sandbox[1])}`,
       rows: [
         { name: "parent 直测", value: lv, label: lab(lv, lat && t.local[1]), color: L },
         { name: "Sandbox", value: sv, label: lab(sv, lat && t.sandbox[1]), color: S,
-          extra: lat ? `比直测多 ${sv - lv} µs` : `直测的 ${Math.round(100 * sv / lv)}%` },
+          extra: lat ? `比直测多 ${add} µs` : `直测的 ${Math.round(100 * sv / lv)}%` },
       ],
     });
   }
@@ -1901,7 +1923,7 @@ function renderResults() {
   for (const t of DATA.tests) {
     const lat = t.unit === "µs";
     const f = (v) => v === undefined ? "–" : lat ? `${v[0]} / ${v[1]} µs` : `${fmt(v)} ${t.unit}`;
-    const ratio = lat ? `+${t.sandbox[0] - t.local[0]} µs` : `${Math.round(100 * t.sandbox / t.local)}%`;
+    const ratio = lat ? `+${t.latAdd ?? (t.sandbox[0] - t.local[0])} µs` : `${Math.round(100 * t.sandbox / t.local)}%`;
     const row = body.insertRow();
     [t.title + (lat ? "（平均 / p99）" : ""), t.desc, f(t.local), f(t.sandbox), ratio, f(t.prevLocal), f(t.prevSandbox)].forEach((v, i) => {
       const td = row.insertCell(); td.textContent = v; if (i > 1) td.className = "n";

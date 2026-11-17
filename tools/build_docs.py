@@ -48,7 +48,7 @@ STEPS = [
          cmd=f"sudo dnf install -y -q git\ngit clone {GH}.git\ncd nitro-sandbox", scripts=[], out=exp("p-clone")),
     dict(part="prep", id="s-setup", where="parent", title="装 fio 和 Firecracker，预留内存池（会重启）",
          why="Sandbox 的内存来自驱动预留的连续内存池，不预留就起不来。脚本还会把 dirty 门槛改成固定值（vm.dirty_bytes=2G / vm.dirty_background_bytes=512M），"
-             "大机型上不改的话 Sandbox 写入只有约 500 MB/s（见常见问题）。最后会重启 parent，1 分钟后重新登录，并 cd ~/nitro-sandbox。",
+             "大内存池时默认按比例的门槛会让 parent 在大量写入时卡死（见常见问题）。最后会重启 parent，1 分钟后重新登录，并 cd ~/nitro-sandbox。",
          cmd="bash parent/setup.sh", scripts=["parent/setup.sh"], out=exp("p-setup")),
     dict(part="prep", id="s-reboot", where="parent", title="确认内存池，记下 instance store 的稳定路径",
          why="NVMe 的编号每次开机都可能变：实测重启后 nvme1n1 一次是 instance store，一次是 EBS 根盘。"
@@ -60,17 +60,18 @@ STEPS = [
          cmd="bash parent/build-guest.sh", scripts=["parent/build-guest.sh"], out=exp("p-build-guest")),
     # A
     dict(part="A", id="s-local", where="parent", title="测 parent 直测（这时 Sandbox 还没开）",
-         why="直接读写 instance store，作为对比基线。会清空盘上的数据。大约 4 分钟。",
+         why="直接读写 instance store 裸盘（O_DIRECT），作为对比基线。会清空盘上的数据（包括 XFS，之后 start-sandbox.sh 会重新格式化）。大约 4 分钟。",
          cmd="bash parent/bench.sh local", scripts=["parent/bench.sh"], out=exp("a-bench-local")),
-    dict(part="A", id="s-start", where="parent", title="启动 Sandbox，把整块 instance store 交给它",
-         why="confidential 模式（非 debug），4 个独占 vCPU，4 GiB 内存。数据盘的两个关键配置："
-             "io_engine 设成 Async，cache_type 设成 Writeback（让 Sandbox 里的 fsync 真正落盘）。",
-         cmd="bash parent/start-sandbox.sh", scripts=["parent/start-sandbox.sh"], out=exp("a-start-sandbox")),
+    dict(part="A", id="s-start", where="parent", title="启动 Sandbox，数据盘是 instance store 上 XFS 里的文件",
+         why="data-disk.sh 把 instance store 格式化成 XFS（第一次）、挂到 /mnt/instance-store，预分配一个大文件给 Sandbox 当数据盘。"
+             "不要把裸盘直接交给 Sandbox：parent 回写裸块设备的缓存时会拆成约 3 KiB 的小请求，写入只有直测的 1/4（见 A 的结果）。"
+             "Sandbox 是 confidential 模式（非 debug），4 个独占 vCPU，4 GiB 内存；数据盘 io_engine 设成 Async，cache_type 设成 Writeback（让 Sandbox 里的 fsync 真正落盘）。",
+         cmd="bash parent/start-sandbox.sh", scripts=["parent/start-sandbox.sh", "parent/data-disk.sh"], out=exp("a-start-sandbox")),
     dict(part="A", id="s-sandbox", where="parent", title="测 Sandbox",
-         why="同一块盘、同样的 fio 参数，这次在 Sandbox 里对 /dev/vdb 跑。大约 8 分钟（写入慢，见结果）。",
+         why="同一块盘、同样的 fio 参数，这次在 Sandbox 里对 /dev/vdb 跑。大约 5 分钟。",
          cmd="bash parent/bench.sh sandbox", scripts=[], out=exp("a-bench-sandbox")),
     dict(part="A", id="s-compare", where="parent", title="对比结果",
-         why="i7i.2xlarge 上：读应该在 parent 直测的 80～100%，4K 随机写和直测差不多，大块写和大文件写约 425 MB/s（直测的 25% 左右，原因见 A 的结果）。",
+         why="i7i.2xlarge 上：顺序读写和 4K 随机写应该和直测差不多（95～101%），4K 随机读在 80% 左右。",
          cmd="python3 parent/compare.py", scripts=["parent/compare.py"], out=exp("a-compare")),
     dict(part="A", id="s-sync", where="parent", title="（可选）看看默认的 Sync 引擎有多慢",
          why="把 io_engine 去掉再测一次随机读和顺序读。这一步说明了为什么启动 Sandbox 那一步一定要写 Async。",
@@ -155,11 +156,12 @@ PARTS = [("prep", "准备"), ("A", "A. instance store 性能"), ("B", "B. Attest
 
 PITFALLS = [
     ("Firecracker 报 <code>No space left on device (os error 28)</code>", "没预留内存池", "做第 {s-setup} 步（会重启）"),
-    ("大机型上 Sandbox 写入只有约 500 MB/s，多线程写甚至让 parent 卡死（SSH 都连不上）",
-     "内存池很大时，按比例算的 dirty 门槛把内存池的空闲内存也算进去，但块设备的 page cache 用不了内存池，dirty 页占满剩下的内存",
+    ("Sandbox 写入只有直测的 25% 左右（i7i.2xlarge 约 425 MB/s）",
+     "把裸盘直接交给了 Sandbox：parent 回写裸块设备的缓存时拆成约 3 KiB 的小请求，被盘的写 IOPS 上限卡住（parent 自己这样写也一样慢）",
+     "数据盘用 XFS 上的文件（第 {s-start} 步的 start-sandbox.sh / data-disk.sh 已经这样做）"),
+    ("大机型上大量写入时 parent 卡死（SSH 都连不上）",
+     "内存池很大时，按比例算的 dirty 门槛把内存池的空闲内存也算进去，但 page cache 用不了内存池，dirty 页占满剩下的内存",
      "第 {s-setup} 步已经把 dirty 改成固定值（<code>vm.dirty_bytes=2G</code> / <code>vm.dirty_background_bytes=512M</code>）"),
-    ("i7i.2xlarge 上 Sandbox 写入只有约 425 MB/s", "parent 内核缓存回写的上限：parent 自己带缓存写同一块盘也一样，跟 Sandbox 无关",
-     "要写得快就换大机型（i7i.8xlarge 单盘约 2 GB/s），多块盘在 Sandbox 里组 RAID 0"),
     ("Sandbox 里 4K 随机读只有 1～4 万 IOPS", "数据盘没写 io_engine，默认是 Sync，一次只处理一个请求", "用 parent/start-sandbox.sh 生成的配置（<code>\"io_engine\": \"Async\"</code>）"),
     ("Sandbox 里看到的 vdb 只有 30G", "NVMe 编号重启后变了，拿到的是 EBS 根盘", "用 <code>/dev/disk/by-id/…Instance_Storage_…</code>（第 {s-reboot} 步）"),
     ("读的数字比预期高很多", "读到了没写过的区域（SSD 不读闪存直接返回），或者 parent 的 page cache 太大", "bench.sh 第一项就是写满测试区；内存池按 config.sh 留 48G，每项前清 cache"),
@@ -190,6 +192,8 @@ for key, (title, desc, unit) in TITLES.items():
     t = {"id": key, "title": title, "desc": desc, "unit": unit, "local": R[key]["local"], "sandbox": R[key]["sandbox"]}
     if key in P:
         t["prevLocal"], t["prevSandbox"] = P[key]["local"], P[key]["sandbox"]
+    if "lat_add" in R[key]:
+        t["latAdd"] = R[key]["lat_add"]
     tests.append(t)
 D = {t["id"]: t for t in tests}
 
@@ -206,30 +210,28 @@ def rng(k):
 RANGE_NOTE = (f"另一轮是在另一台 i7i.2xlarge 上用同样的步骤测的。早先在第三台 i7i.2xlarge 上（dirty 还没改成固定值）测的写入也是 24～25%。两台机器相比，Sandbox/直测："
               f"4K 随机读 {rng('2-randread-4k')}，4K 随机写 {rng('4-randwrite-4k')}，顺序读 {rng('5-seqread-1m')}，"
               f"大块顺序写 {rng('1-seqwrite-64g')}，大文件写入 {rng('6-bigfile-64g')}。")
-LAT_ADD = D["3-randread-4k-qd1"]["sandbox"][0] - D["3-randread-4k-qd1"]["local"][0]
-X2, X8 = LARGE["x2"], LARGE["x8"]
-X8_RUNS = X8["sb_1disk"]["seqwrite_runs_2g"]
-X8_SB1 = f"{min(X8_RUNS):,}～{max(X8_RUNS):,}"
-X8_SB2 = f"{X8['sb_2disk_raid0']['seqwrite']:,}"
+LAT_ADD = R["3-randread-4k-qd1"].get("lat_add", D["3-randread-4k-qd1"]["sandbox"][0] - D["3-randread-4k-qd1"]["local"][0])
+X8, REQ, OLD2 = LARGE["x8"], LARGE["req"], LARGE["x2_raw_old"]
 n = lambda v: v if isinstance(v, str) else f"{v:,}"
-X2_ROWS = [("parent 直测（O_DIRECT）", n(X2["host_direct_seqwrite"])),
-           ("parent 带缓存写同一块盘（Sandbox 关着，dirty 固定）", n(X2["host_bufwrite"]["fixed"])),
-           ("同上，再关掉写回限流（wbt_lat_usec=0）", n(X2["host_bufwrite"]["fixed_wbt_off"])),
-           ("Sandbox，4 vCPU", n(X2["sb_seqwrite"]["vcpu4"])), ("Sandbox，2 vCPU（parent 多一个物理核）", n(X2["sb_seqwrite"]["vcpu2"])),
-           ("Sandbox，dirty 默认（同一次开机交替测两次）", " / ".join(n(v) for v in X2["sb_seqwrite"]["dirty_default"])),
-           ("Sandbox，dirty 固定（同上）", " / ".join(n(v) for v in X2["sb_seqwrite"]["dirty_fixed"])),
-           ("Sandbox，关掉写回限流", n(X2["sb_seqwrite"]["wbt_off"]))]
-X8_ROWS = [("parent 直测：单盘", X8["host_1disk"]), ("parent 直测：两盘 RAID 0", X8["host_raid0"]),
-           ("Sandbox：单盘，dirty 默认", {"seqwrite": " / ".join(n(v) for v in X8["sb_1disk_default"]["seqwrite"]), "randwrite": X8["sb_1disk_default"]["randwrite"]}),
-           ("Sandbox：单盘，dirty 固定", X8["sb_1disk"]),
-           ("Sandbox：两块盘，在 Sandbox 里 RAID 0", X8["sb_2disk_raid0"]),
-           ("Sandbox：parent 上 RAID 0 再当一块盘", X8["sb_hostraid"])]
-SENS = X8["sens_seqwrite"]
-X8_NOTE = (f"单位：MB/s、IOPS。Sandbox 4 vCPU，测法和 A 部分一样（fio direct=1，64 GiB 测试区，写入含 fsync）；这组不在 workshop 步骤里。"
-           f"单盘、dirty 固定为 2G 时顺序写测了三次：{X8_SB1} MB/s。"
-           f"dirty 固定为 256M～8G 之间几种取值，单盘顺序写都在 {min(v for k, v in SENS.items() if k != 'default'):,}～{max(v for k, v in SENS.items() if k != 'default'):,} MB/s；"
-           f"再关掉写回限流（wbt_lat_usec=0）能从 {X8['sb_seqwrite_wbt']['on']:,} 到 {X8['sb_seqwrite_wbt']['off']:,} MB/s。"
-           f"parent 自己带缓存写：dirty 默认 {X8['host_bufwrite']['default']:,}、固定 {X8['host_bufwrite']['fixed']:,} MB/s。")
+pc = lambda a, b: round(100 * a / b)
+X2_SEQW_PCT, X8_SEQW_PCT = pct("1-seqwrite-64g"), pc(X8["sb_1disk"]["seqwrite"], X8["host_1disk"]["seqwrite"])
+REQ_ROWS = [(m, r) for m in ("x2", "x8") for r in REQ[m]]
+REQ_LABEL = {"x2": "i7i.2xlarge", "x8": "i7i.8xlarge"}
+X8_ROWS = [("parent 直测：单盘", X8["host_1disk"]), ("Sandbox：单盘（XFS 文件）", X8["sb_1disk"]),
+           ("parent 直测：两盘 RAID 0", X8["host_raid0"]), ("Sandbox：两块盘各一个 XFS 文件，Sandbox 里 RAID 0", X8["sb_2file_raid0"])]
+X8_NOTE = (f"单位：MB/s、IOPS。Sandbox 4 vCPU，fio 参数和 A 部分一样（direct=1，64 GiB 测试区，写入含 fsync）；单盘两行来自按本手册步骤的一次完整运行，"
+           f"RAID 0 两行不在 workshop 步骤里。单盘大文件写入：直测 {X8['host_bigfile']:,}、Sandbox {X8['sb_1disk_bigfile']:,} MB/s。"
+           f"单盘直测顺序读波动较大（另一次测试是 {X8['host_1disk_seqread_other']:,} MB/s），所以这一行 Sandbox 比直测高不代表读得更快。"
+           f"早先把裸盘直接交给 Sandbox 时：单盘顺序写 dirty 默认 {' / '.join(n(v) for v in X8['raw_old']['sb_1disk_default'])}、dirty 固定 "
+           f"{min(X8['raw_old']['sb_1disk_fixed']):,}～{max(X8['raw_old']['sb_1disk_fixed']):,} MB/s；在 parent 上做 RAID 0 再当一块盘给 Sandbox，顺序读只有 {X8['raw_old']['sb_hostraid_seqread']:,} MB/s，不要这么做。")
+OLD2_NOTE = (f"用裸盘时还排除过这些因素（i7i.2xlarge，Sandbox 顺序写）：dirty 默认 {' / '.join(n(v) for v in OLD2['dirty_default'])}、dirty 固定 "
+             f"{' / '.join(n(v) for v in OLD2['dirty_fixed'])}、关掉写回限流 {OLD2['wbt_off']:,}、Sandbox 只给 2 vCPU {OLD2['vcpu2']:,} MB/s，parent 的 CPU 一直很闲。"
+             f"盘上请求数是测试期间 /sys/block/&lt;盘&gt;/stat 的增量。")
+FIX_TEXT = (f"早先版本把 instance store 的裸盘直接交给 Sandbox，测出写入只有直测的 25%（i7i.2xlarge 约 {OLD2['sb_seqwrite']:,} MB/s），并把它说成 Sandbox 的限制，这是错的。"
+            f"根因是 parent 回写裸块设备的 page cache 时会拆成平均约 3 KiB 的小请求，被盘的写 IOPS 上限卡住：parent 自己这样写也只有 {OLD2['host_bufwrite']:,} MB/s。"
+            f"现在 start-sandbox.sh 用 instance store 上 XFS 里的一个文件当数据盘，回写是 128 KiB 的请求，Sandbox 顺序写达到直测的 {X2_SEQW_PCT}%（i7i.2xlarge）和 {X8_SEQW_PCT}%（i7i.8xlarge）。")
+RANGE_NOTE = (f"上面是按本手册步骤的一次完整运行。另外单独复测过：数据盘用 XFS 文件时 Sandbox 顺序写 i7i.2xlarge {REQ['x2'][3]['mbs']:,} MB/s、i7i.8xlarge {REQ['x8'][3]['mbs']:,} MB/s，"
+              f"和这里的结果一致。")
 
 
 def pcr0_of(name):
@@ -332,18 +334,20 @@ def build_html():
         "{{BIGFILE_PCT}}": str(pct("6-bigfile-64g")), "{{RANDREAD_PCT}}": str(pct("2-randread-4k")), "{{SEQREAD_PCT}}": str(pct("5-seqread-1m")),
         "{{RANDWRITE_PCT}}": str(pct("4-randwrite-4k")), "{{SANDBOX_WRITE}}": str(D["6-bigfile-64g"]["sandbox"]), "{{LAT_ADD}}": str(LAT_ADD),
         "{{SYNC_X}}": str(round(D["2-randread-4k"]["sandbox"] / SYNC["randread"])),
-        "{{X2_BUF}}": f"{X2['host_bufwrite']['fixed']:,}", "{{X8_BUF}}": f"{X8['host_bufwrite']['fixed']:,}", "{{X8_SB1}}": X8_SB1, "{{X8_SB2}}": X8_SB2,
+        "{{FIX_TEXT}}": FIX_TEXT, "{{X2_SEQW_PCT}}": str(X2_SEQW_PCT), "{{X8_SEQW_PCT}}": str(X8_SEQW_PCT),
+        "{{X8_SB1}}": f"{X8['sb_1disk']['seqwrite']:,}", "{{X8_SB2}}": f"{X8['sb_2file_raid0']['seqwrite']:,}", "{{X8_HOST2}}": f"{X8['host_raid0']['seqwrite']:,}",
+        "{{X8_RR}}": f"{X8['sb_1disk']['randread']:,}", "{{X8_RR_HOST}}": f"{X8['host_1disk']['randread']:,}",
         "{{P99_LOCAL}}": str(D["3-randread-4k-qd1"]["local"][1]), "{{P99_SB}}": str(D["3-randread-4k-qd1"]["sandbox"][1]),
-        "<!--X2_EVIDENCE-->": '<div class="tablewrap"><table><thead><tr><th>i7i.2xlarge，顺序写 64 GiB（1 MiB 块，含 fsync）</th><th class="n">MB/s</th></tr></thead><tbody>'
-                              + "".join(f'<tr><td>{a}</td><td class="n">{b}</td></tr>' for a, b in X2_ROWS) + "</tbody></table></div>",
+        "<!--REQ_TABLE-->": '<div class="tablewrap"><table><thead><tr><th>机型</th><th>顺序写 64 GiB（1 MiB 块，含 fsync）</th><th class="n">写入 MB/s</th><th class="n">盘上写请求/秒</th><th class="n">平均每个请求</th></tr></thead><tbody>'
+                            + "".join(f'<tr><td>{REQ_LABEL[m]}</td><td>{r["label"]}</td><td class="n">{r["mbs"]:,}</td><td class="n">{r["reqs"]:,}</td><td class="n">{r["kib"]} KiB</td></tr>' for m, r in REQ_ROWS)
+                            + f'</tbody></table></div><p class="note">{OLD2_NOTE}</p>',
         "<!--X8_TABLE-->": '<div class="tablewrap"><table><thead><tr><th>i7i.8xlarge</th><th class="n">顺序写</th><th class="n">顺序读</th><th class="n">4K 随机读</th><th class="n">4K 随机写</th></tr></thead><tbody>'
-                           + "".join(f'<tr><td>{a}</td>' + "".join(f'<td class="n">{n(r[k]) if k in r else "–"}</td>' for k in ("seqwrite", "seqread", "randread", "randwrite")) + "</tr>" for a, r in X8_ROWS)
+                           + "".join(f'<tr><td>{a}</td>' + "".join(f'<td class="n">{n(r[k])}</td>' for k in ("seqwrite", "seqread", "randread", "randwrite")) + "</tr>" for a, r in X8_ROWS)
                            + f'</tbody></table></div><p class="note">{X8_NOTE}</p>',
     }
     for k, _ in PARTS:
         rep[f"<!--STEPS:{k}-->"] = "\n".join(step_html(st) for st in STEPS if st["part"] == k)
-    for a, b in rep.items():
-        assert a in page, a
+    for a, b in rep.items():   # 模板里没用到的替换项跳过；没替换掉的占位符在下面检查
         page = page.replace(a, b)
     left = re.findall(r"\{\{[A-Z_]+\}\}|<!--[A-Z:a-z]+-->", page)
     assert not left, left
@@ -361,9 +365,7 @@ def build_md():
     w("3. **把整块 instance store 交给 Sandbox 后读写有多快**：和 parent 上直接测对比\n")
     w(f"每一步执行的都是仓库里的脚本，每一步都附了实测的预期输出（2026-11-17，在全新的账号资源上从第 1 步跑到第 {len(STEPS)} 步）。"
       f"图文版（同样的步骤，带结果矩阵和性能图表）：https://sunchaoqun.github.io/nitro-sandbox/\n")
-    w(f"> **更正（2026-11-17）**：早先版本只给了 i7i.2xlarge 的写入数字（直测的 25%），并把原因说成 Sandbox 本身的限制，这不准确。"
-      f"Sandbox 的写入要经过 parent 内核的缓存回写，速度主要取决于机型：i7i.2xlarge 上 parent 自己带缓存写也只有约 {X2['host_bufwrite']['fixed']:,} MB/s；"
-      f"i7i.8xlarge 上单盘 Sandbox 能写 {X8_SB1} MB/s，两块盘在 Sandbox 里组 RAID 0 能写 {X8_SB2} MB/s。大机型上还要把 parent 的 dirty 门槛改成固定值，setup.sh 已经做了。\n")
+    w(f"> **更正（2026-11-17）**：{FIX_TEXT}\n")
     w("## 结果一览\n")
     w("| 谁来要 | " + " | ".join(c.split("（")[0] for c in MATRIX_COLS) + " |")
     w("|---|---|---|---|")
@@ -375,24 +377,26 @@ def build_md():
     w("|---|---|---|---|")
     for t in tests:
         if t["unit"] == "µs":
-            w(f"| {t['title']}（平均 / p99） | {t['local'][0]} / {t['local'][1]} µs | {t['sandbox'][0]} / {t['sandbox'][1]} µs | +{t['sandbox'][0] - t['local'][0]} µs |")
+            w(f"| {t['title']}（平均 / p99） | {t['local'][0]} / {t['local'][1]} µs | {t['sandbox'][0]} / {t['sandbox'][1]} µs | +{LAT_ADD} µs |")
         else:
             w(f"| {t['title']} | {t['local']:,} {t['unit']} | {t['sandbox']:,} {t['unit']} | {pct(t['id'])}% |")
     w(f"| 4K 随机读，默认 Sync 引擎 | – | {SYNC['randread']:,} IOPS | Async 的 1/{round(D['2-randread-4k']['sandbox'] / SYNC['randread'])} |")
     w(f"\n{RANGE_NOTE}\n")
-    w("### 为什么 i7i.2xlarge 上写入只有约 425 MB/s\n")
-    w("瓶颈在 parent 内核的缓存回写，不在 Sandbox：Sandbox 关掉、parent 自己用带缓存的方式写同一块盘，速度也一样；CPU 很闲，dirty 门槛和写回限流（blk-wbt）都不影响。\n")
-    w("| i7i.2xlarge，顺序写 64 GiB（1 MiB 块，含 fsync） | MB/s |")
-    w("|---|---|")
-    for a, b in X2_ROWS:
-        w(f"| {a} | {b} |")
-    w("\n### 换大机型、多盘 RAID 0（i7i.8xlarge 实测）\n")
-    w(f"i7i.8xlarge 有两块 3750 GB NVMe。同样走缓存回写，这台机型上快得多：parent 自己带缓存写单盘能到 {X8['host_bufwrite']['fixed']:,} MB/s。parent 的 dirty 门槛必须改成固定值（setup.sh 已经设了），否则只有约 500 MB/s，多线程写还会把 parent 卡死；"
-      "RAID 0 要在 Sandbox 里做（每块 NVMe 各给一块 virtio 盘），在 parent 上做好再当一块盘给 Sandbox 没有用。\n")
+    w("### 数据盘为什么要用 XFS 上的文件，不能用裸盘\n")
+    w("Firecracker 打开数据盘时不用 O_DIRECT，Sandbox 的写入先进 parent 的 page cache，再由 parent 内核回写。回写裸块设备时请求被拆得很小，被盘的写 IOPS 上限卡住；"
+      "回写 XFS 上的文件是 128 KiB 的请求，和 O_DIRECT 一样快。\n")
+    w("| 机型 | 顺序写 64 GiB（1 MiB 块，含 fsync） | 写入 MB/s | 盘上写请求/秒 | 平均每个请求 |")
+    w("|---|---|---|---|---|")
+    for m, r in REQ_ROWS:
+        w(f"| {REQ_LABEL[m]} | {r['label']} | {r['mbs']:,} | {r['reqs']:,} | {r['kib']} KiB |")
+    w(f"\n{re.sub(r'&lt;|&gt;', lambda m: '<' if m.group() == '&lt;' else '>', OLD2_NOTE)}\n")
+    w("### i7i.8xlarge、多盘 RAID 0\n")
+    w(f"数据盘同样用 XFS 文件：单盘 Sandbox 顺序写是直测的 {X8_SEQW_PCT}%；两块盘各放一个文件、在 Sandbox 里组 RAID 0，顺序写 {X8['sb_2file_raid0']['seqwrite']:,} MB/s，"
+      f"和 parent 直测两盘 RAID 0（{X8['host_raid0']['seqwrite']:,}）几乎一样。随机读是例外：每个 Sandbox 的 4K 随机读只有 25～31 万 IOPS，大机型上明显低于直测。\n")
     w("| i7i.8xlarge | 顺序写 MB/s | 顺序读 MB/s | 4K 随机读 IOPS | 4K 随机写 IOPS |")
     w("|---|---|---|---|---|")
     for a, r in X8_ROWS:
-        w(f"| {a} | " + " | ".join(n(r[k]) if k in r else "–" for k in ("seqwrite", "seqread", "randread", "randwrite")) + " |")
+        w(f"| {a} | " + " | ".join(n(r[k]) for k in ("seqwrite", "seqread", "randread", "randwrite")) + " |")
     w(f"\n{X8_NOTE}\n")
     w("## 开始之前\n")
     w("- **工作机**（你自己的电脑或者一台跳板机）：AWS CLI v2 并配好有管理员权限的凭证、git、python3、ssh")
